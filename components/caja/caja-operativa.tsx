@@ -42,25 +42,19 @@ export function CajaOperativa() {
   const [pendiente, setPendiente] = useState<Record<string, boolean>>({});
   const [responsables, setResponsables] = useState<Record<string, string>>({});
   const [motivoPorPedido, setMotivoPorPedido] = useState<Record<string, string>>({});
-  const [observacionPorPedido, setObservaciónPorPedido] = useState<Record<string, string>>({});
+  const [observacionPorPedido, setObservacionPorPedido] = useState<Record<string, string>>({});
 
   const cargar = useCallback(async () => {
     const supabase = supabaseBrowser();
-    const { data, error: queryError } = await supabase
-      .from("cuentas")
-      .select(
-        "id,estado,total_cuenta,responsable_pendiente,created_at,mesas(nombre,zona),perfiles(nombre),pagos(id,monto,medio,propina,timestamp),pedidos(id,estado,enviado_at,notas,perfiles(nombre),pedido_items(id,cantidad,precio_unitario_capturado,notas,estado,productos(nombre)))",
-      )
-      .in("estado", ["abierta", "por_cobrar", "pagada_parcial", "pendiente"])
-      .order("created_at", { ascending: false })
-      .limit(50);
+    const { data, error: queryError } = await supabase.rpc("cuentas_activas_caja");
 
     if (queryError) {
       setMensaje(`No se pudieron cargar cuentas: ${queryError.message}`);
+      setCuentas([]);
       return;
     }
 
-    setCuentas(data ?? []);
+    setCuentas(Array.isArray(data) ? data : []);
     setActualizadoAt(new Date().toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
   }, []);
 
@@ -128,7 +122,7 @@ export function CajaOperativa() {
   async function anularPedido(pedidoId: string) {
     const motivoId = motivoPorPedido[pedidoId];
     if (!motivoId) {
-      setMensaje("Selecciona un motivo de anulacion.");
+      setMensaje("Selecciona un motivo de anulaciÃƒÂ³n.");
       return;
     }
 
@@ -271,10 +265,10 @@ export function CajaOperativa() {
                       {pedido.estado !== "anulado" ? (
                         <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
                           <select value={motivoPorPedido[pedido.id] ?? ""} onChange={(event) => setMotivoPorPedido((actual) => ({ ...actual, [pedido.id]: event.target.value }))} className="tap-target rounded-md border border-antiguo/20 bg-espresso px-3 text-crema">
-                            <option value="">Motivo anulación</option>
+                            <option value="">Motivo anulacion</option>
                             {motivos.map((motivo) => <option key={motivo.id} value={motivo.id}>{motivo.texto}</option>)}
                           </select>
-                          <input value={observacionPorPedido[pedido.id] ?? ""} onChange={(event) => setObservaciónPorPedido((actual) => ({ ...actual, [pedido.id]: event.target.value }))} placeholder="Observación" className="tap-target rounded-md border border-antiguo/20 bg-espresso px-3 text-crema placeholder:text-antiguo/50" />
+                          <input value={observacionPorPedido[pedido.id] ?? ""} onChange={(event) => setObservacionPorPedido((actual) => ({ ...actual, [pedido.id]: event.target.value }))} placeholder="Observacion" className="tap-target rounded-md border border-antiguo/20 bg-espresso px-3 text-crema placeholder:text-antiguo/50" />
                           <button disabled={procesando === pedido.id} onClick={() => anularPedido(pedido.id)} className="tap-target rounded-md border border-red-300/30 bg-red-950/30 px-3 text-sm font-bold text-red-100 disabled:opacity-50">Anular</button>
                         </div>
                       ) : null}

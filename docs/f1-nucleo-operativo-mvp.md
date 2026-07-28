@@ -4,11 +4,12 @@
 
 Ejecutar en Supabase Studio > SQL Editor, en este orden:
 
-1. `supabase/migrations/202607280005_f1_nucleo_operativo_mvp.sql`
-2. `supabase/migrations/202607280006_f1_completar_operacion.sql`
-3. `supabase/migrations/202607290001_f1_pin_plano_perfiles.sql`
-4. `supabase/migrations/202607290002_f1_login_mesero_pin.sql`
-5. `supabase/migrations/202607290003_f1_cuentas_por_cobrar.sql`
+1. `supabase/migrations/002_f1_nucleo_operativo_mvp.sql`
+2. `supabase/migrations/003_f1_completar_operacion.sql`
+3. `supabase/migrations/004_f1_pin_plano_perfiles.sql`
+4. `supabase/migrations/005_f1_login_mesero_pin.sql`
+5. `supabase/migrations/006_f1_cuentas_por_cobrar.sql`
+6. `supabase/migrations/007_f1_caja_cuentas_visibles.sql`
 
 La segunda migracion completa F1 con:
 
@@ -26,9 +27,11 @@ La cuarta migracion agrega `email_login_mesero(usuario, pin)`, usada por el logi
 
 La quinta migracion marca una cuenta como `por_cobrar` cuando todos sus pedidos activos estan `entregado`, y normaliza cuentas ya entregadas.
 
+La sexta migracion agrega `cuentas_activas_caja()`, una RPC para que caja lea las cuentas activas de forma robusta bajo RLS.
+
 ## Verificacion SQL
 
-Despues de ejecutar ambas migraciones:
+Despues de ejecutar las migraciones de F1:
 
 ```sql
 select count(*) as mesas from public.mesas;
@@ -45,7 +48,8 @@ where proname in (
   'obtener_o_crear_cuenta',
   'anular_pedido',
   'email_login_mesero',
-  'marcar_cuenta_por_cobrar_si_lista'
+  'marcar_cuenta_por_cobrar_si_lista',
+  'cuentas_activas_caja'
 )
 order by proname;
 select count(*) as motivos_anulacion
@@ -64,7 +68,7 @@ Esperado:
 - `mesas = 8`
 - `productos >= 10`
 - `sub_cuentas` y `modificaciones_pedido` existen.
-- aparecen las 8 RPC.
+- aparecen las 9 RPC.
 - `motivos_anulacion >= 1`
 - en columnas de `perfiles` aparece `pin` y no aparece `pin_hash`
 
