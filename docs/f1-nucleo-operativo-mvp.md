@@ -8,6 +8,7 @@ Ejecutar en Supabase Studio > SQL Editor, en este orden:
 2. `supabase/migrations/202607280006_f1_completar_operacion.sql`
 3. `supabase/migrations/202607290001_f1_pin_plano_perfiles.sql`
 4. `supabase/migrations/202607290002_f1_login_mesero_pin.sql`
+5. `supabase/migrations/202607290003_f1_cuentas_por_cobrar.sql`
 
 La segunda migracion completa F1 con:
 
@@ -22,6 +23,8 @@ La segunda migracion completa F1 con:
 La tercera migracion ajusta `public.perfiles`: elimina `pin_hash` y deja `pin` plano por solicitud operativa temporal. Supabase Auth sigue manejando su propia contrasena interna.
 
 La cuarta migracion agrega `email_login_mesero(usuario, pin)`, usada por el login para resolver el email de Supabase Auth desde `public.perfiles`.
+
+La quinta migracion marca una cuenta como `por_cobrar` cuando todos sus pedidos activos estan `entregado`, y normaliza cuentas ya entregadas.
 
 ## Verificacion SQL
 
@@ -41,7 +44,8 @@ where proname in (
   'registrar_pagos_cuenta',
   'obtener_o_crear_cuenta',
   'anular_pedido',
-  'email_login_mesero'
+  'email_login_mesero',
+  'marcar_cuenta_por_cobrar_si_lista'
 )
 order by proname;
 select count(*) as motivos_anulacion
@@ -60,10 +64,29 @@ Esperado:
 - `mesas = 8`
 - `productos >= 10`
 - `sub_cuentas` y `modificaciones_pedido` existen.
-- aparecen las 7 RPC.
+- aparecen las 8 RPC.
 - `motivos_anulacion >= 1`
 - en columnas de `perfiles` aparece `pin` y no aparece `pin_hash`
 
+## Diagnostico de cuentas
+
+Si un pedido desaparece de barra pero no lo ves en caja, ejecuta:
+
+```sql
+select
+  c.id as cuenta_id,
+  c.estado as estado_cuenta,
+  c.total_cuenta,
+  p.id as pedido_id,
+  p.estado as estado_pedido,
+  p.enviado_at
+from public.cuentas c
+join public.pedidos p on p.cuenta_id = c.id
+order by p.enviado_at desc
+limit 10;
+```
+
+Para cobrar debe existir una cuenta con `estado_cuenta` en `abierta`, `por_cobrar`, `pagada_parcial` o `pendiente`. Cuando el pedido queda `entregado`, lo esperado es `por_cobrar`.
 ## Prueba funcional local
 
 1. Iniciar la app con `npm.cmd run dev` y abrir `http://localhost:3000`.

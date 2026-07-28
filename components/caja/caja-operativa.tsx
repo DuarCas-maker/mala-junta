@@ -36,12 +36,13 @@ export function CajaOperativa() {
   const [motivos, setMotivos] = useState<Motivo[]>([]);
   const [mensaje, setMensaje] = useState<string | null>(null);
   const [procesando, setProcesando] = useState<string | null>(null);
+  const [actualizadoAt, setActualizadoAt] = useState<string | null>(null);
   const [montos, setMontos] = useState<Record<string, Partial<Record<MedioPago, string>>>>({});
   const [propinas, setPropinas] = useState<Record<string, string>>({});
   const [pendiente, setPendiente] = useState<Record<string, boolean>>({});
   const [responsables, setResponsables] = useState<Record<string, string>>({});
   const [motivoPorPedido, setMotivoPorPedido] = useState<Record<string, string>>({});
-  const [observacionPorPedido, setObservacionPorPedido] = useState<Record<string, string>>({});
+  const [observacionPorPedido, setObservaciónPorPedido] = useState<Record<string, string>>({});
 
   const cargar = useCallback(async () => {
     const supabase = supabaseBrowser();
@@ -55,11 +56,12 @@ export function CajaOperativa() {
       .limit(50);
 
     if (queryError) {
-      setMensaje(queryError.message);
+      setMensaje(`No se pudieron cargar cuentas: ${queryError.message}`);
       return;
     }
 
     setCuentas(data ?? []);
+    setActualizadoAt(new Date().toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
   }, []);
 
   useEffect(() => {
@@ -195,7 +197,10 @@ export function CajaOperativa() {
             <h1 className="text-3xl font-black text-crema">Cuentas y cobros</h1>
             <p className="text-sm text-antiguo/70">{perfil?.nombre}</p>
           </div>
-          <button onClick={salir} className="tap-target rounded-md border border-antiguo/20 bg-espresso px-4 font-bold">Salir</button>
+          <div className="flex gap-2">
+            <button onClick={cargar} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-4 font-bold">Refrescar</button>
+            <button onClick={salir} className="tap-target rounded-md border border-antiguo/20 bg-espresso px-4 font-bold">Salir</button>
+          </div>
         </header>
 
         <div className="grid gap-3 md:grid-cols-3">
@@ -213,6 +218,7 @@ export function CajaOperativa() {
           </div>
         </div>
 
+        {actualizadoAt ? <p className="text-xs font-bold uppercase tracking-wide text-antiguo/55">Actualizado {actualizadoAt}</p> : null}
         {mensaje ? <p className="rounded-md border border-antiguo/15 bg-espresso p-3 text-sm">{mensaje}</p> : null}
 
         <div className="grid gap-4 xl:grid-cols-2">
@@ -265,10 +271,10 @@ export function CajaOperativa() {
                       {pedido.estado !== "anulado" ? (
                         <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
                           <select value={motivoPorPedido[pedido.id] ?? ""} onChange={(event) => setMotivoPorPedido((actual) => ({ ...actual, [pedido.id]: event.target.value }))} className="tap-target rounded-md border border-antiguo/20 bg-espresso px-3 text-crema">
-                            <option value="">Motivo anulacion</option>
+                            <option value="">Motivo anulación</option>
                             {motivos.map((motivo) => <option key={motivo.id} value={motivo.id}>{motivo.texto}</option>)}
                           </select>
-                          <input value={observacionPorPedido[pedido.id] ?? ""} onChange={(event) => setObservacionPorPedido((actual) => ({ ...actual, [pedido.id]: event.target.value }))} placeholder="Observacion" className="tap-target rounded-md border border-antiguo/20 bg-espresso px-3 text-crema placeholder:text-antiguo/50" />
+                          <input value={observacionPorPedido[pedido.id] ?? ""} onChange={(event) => setObservaciónPorPedido((actual) => ({ ...actual, [pedido.id]: event.target.value }))} placeholder="Observación" className="tap-target rounded-md border border-antiguo/20 bg-espresso px-3 text-crema placeholder:text-antiguo/50" />
                           <button disabled={procesando === pedido.id} onClick={() => anularPedido(pedido.id)} className="tap-target rounded-md border border-red-300/30 bg-red-950/30 px-3 text-sm font-bold text-red-100 disabled:opacity-50">Anular</button>
                         </div>
                       ) : null}
