@@ -1,6 +1,7 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
+import { CierreCajaPanel } from "@/components/caja/cierre-caja-panel";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { estadoPedidoTexto, formatoCOP } from "@/lib/format";
 import { supabaseBrowser } from "@/lib/supabase-browser";
@@ -200,6 +201,8 @@ export function CajaOperativa() {
             <button onClick={salir} className="tap-target rounded-md border border-antiguo/20 bg-espresso px-4 font-bold">Salir</button>
           </div>
         </header>
+
+        <CierreCajaPanel perfil={perfil!} />
 
         <div className="grid gap-3 md:grid-cols-3">
           <div className="rounded-lg border border-antiguo/15 bg-espresso p-4">
