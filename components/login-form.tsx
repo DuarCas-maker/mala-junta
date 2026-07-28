@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -31,7 +31,7 @@ export function LoginForm() {
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword(credenciales);
 
       if (authError || !authData.user) {
-        throw new Error("Credenciales inválidas o usuario inactivo.");
+        throw new Error(`Auth: ${authError?.message ?? "credenciales inválidas"}`);
       }
 
       const { data: perfil, error: perfilError } = await supabase
@@ -43,7 +43,7 @@ export function LoginForm() {
 
       if (perfilError || !perfil) {
         await supabase.auth.signOut();
-        throw new Error("El usuario no tiene perfil activo.");
+        throw new Error(`Perfil no activo o no enlazado. UID Auth: ${authData.user.id}`);
       }
 
       router.push(rutaPorRol(perfil.rol));
