@@ -46,16 +46,35 @@ export function MeseroOperativo() {
   }, []);
 
   useEffect(() => {
+    let activo = true;
+
     async function cargarDatos() {
+      setMensaje("Cargando mesas y productos...");
       const supabase = supabaseBrowser();
-      const [{ data: mesasData }, { data: productosData }] = await Promise.all([
+      const [{ data: mesasData, error: mesasError }, { data: productosData, error: productosError }] = await Promise.all([
         supabase.from("mesas").select("id,nombre,zona,es_vip").eq("activa", true).order("nombre"),
         supabase.from("productos").select("id,nombre,precio_venta,stock_actual,categorias(nombre)").eq("activo", true).order("nombre"),
       ]);
-      setMesas((mesasData ?? []) as Mesa[]);
-      setProductos((productosData ?? []) as unknown as Producto[]);
+
+      if (mesasError) throw mesasError;
+      if (productosError) throw productosError;
+
+      if (activo) {
+        setMesas((mesasData ?? []) as Mesa[]);
+        setProductos((productosData ?? []) as unknown as Producto[]);
+        setMensaje(null);
+      }
     }
-    if (perfil) cargarDatos();
+
+    if (perfil) {
+      cargarDatos().catch((err) => {
+        if (activo) setMensaje(err instanceof Error ? err.message : "No se pudieron cargar mesas y productos.");
+      });
+    }
+
+    return () => {
+      activo = false;
+    };
   }, [perfil]);
 
   const total = useMemo(() => {
