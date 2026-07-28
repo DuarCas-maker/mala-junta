@@ -56,18 +56,18 @@ export function LoginForm() {
   }
 
   return (
-    <form onSubmit={iniciarSesion} className="w-full max-w-md rounded-lg border border-black/10 bg-white p-5 shadow-suave">
-      <div className="mb-5 grid grid-cols-2 rounded-md bg-papel p-1 text-sm font-semibold">
+    <form onSubmit={iniciarSesion} className="w-full max-w-md rounded-lg border border-antiguo/20 bg-espresso/90 p-5 shadow-suave backdrop-blur">
+      <div className="mb-5 grid grid-cols-2 rounded-md border border-antiguo/15 bg-carbon p-1 text-sm font-semibold">
         <button
           type="button"
-          className={`tap-target rounded px-3 ${modo === "equipo" ? "bg-noche text-white" : "text-tinta"}`}
+          className={`tap-target rounded px-3 ${modo === "equipo" ? "bg-oro text-carbon" : "text-champana"}`}
           onClick={() => setModo("equipo")}
         >
           Admin / Caja
         </button>
         <button
           type="button"
-          className={`tap-target rounded px-3 ${modo === "mesero" ? "bg-noche text-white" : "text-tinta"}`}
+          className={`tap-target rounded px-3 ${modo === "mesero" ? "bg-oro text-carbon" : "text-champana"}`}
           onClick={() => setModo("mesero")}
         >
           Mesero PIN
@@ -76,20 +76,20 @@ export function LoginForm() {
 
       {modo === "equipo" ? (
         <div className="space-y-4">
-          <label className="block text-sm font-semibold text-tinta">
+          <label className="block text-sm font-semibold text-champana">
             Correo
             <input
-              className="tap-target mt-1 w-full rounded-md border border-black/15 px-3"
+              className="tap-target mt-1 w-full rounded-md border border-antiguo/20 bg-carbon px-3 text-crema outline-none focus:border-dorado"
               type="email"
               value={email}
               onChange={(event) => setEmail(event.target.value)}
               autoComplete="username"
             />
           </label>
-          <label className="block text-sm font-semibold text-tinta">
+          <label className="block text-sm font-semibold text-champana">
             Contraseña
             <input
-              className="tap-target mt-1 w-full rounded-md border border-black/15 px-3"
+              className="tap-target mt-1 w-full rounded-md border border-antiguo/20 bg-carbon px-3 text-crema outline-none focus:border-dorado"
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
@@ -99,19 +99,19 @@ export function LoginForm() {
         </div>
       ) : (
         <div className="space-y-4">
-          <label className="block text-sm font-semibold text-tinta">
+          <label className="block text-sm font-semibold text-champana">
             Usuario
             <input
-              className="tap-target mt-1 w-full rounded-md border border-black/15 px-3"
+              className="tap-target mt-1 w-full rounded-md border border-antiguo/20 bg-carbon px-3 text-crema outline-none focus:border-dorado"
               value={usuario}
               onChange={(event) => setUsuario(event.target.value)}
               autoComplete="username"
             />
           </label>
-          <label className="block text-sm font-semibold text-tinta">
+          <label className="block text-sm font-semibold text-champana">
             PIN de 4 dígitos
             <input
-              className="tap-target mt-1 w-full rounded-md border border-black/15 px-3 text-xl tracking-widest"
+              className="tap-target mt-1 w-full rounded-md border border-antiguo/20 bg-carbon px-3 text-xl tracking-widest text-crema outline-none focus:border-dorado"
               value={pin}
               onChange={(event) => setPin(event.target.value.replace(/\D/g, "").slice(0, 4))}
               inputMode="numeric"
@@ -122,10 +122,10 @@ export function LoginForm() {
         </div>
       )}
 
-      {mensaje ? <p className="mt-4 rounded-md bg-red-50 p-3 text-sm text-red-700">{mensaje}</p> : null}
+      {mensaje ? <p className="mt-4 rounded-md border border-red-300/30 bg-red-950/40 p-3 text-sm text-red-100">{mensaje}</p> : null}
 
       <button
-        className="tap-target mt-5 w-full rounded-md bg-acento px-4 font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
+        className="tap-target mt-5 w-full rounded-md bg-oro px-4 font-bold text-carbon disabled:cursor-not-allowed disabled:opacity-60"
         disabled={cargando}
       >
         {cargando ? "Entrando..." : "Entrar"}

@@ -74,33 +74,31 @@ export function PanelRol({ rolEsperado, titulo, descripcion }: Props) {
   }
 
   return (
-    <main className="min-h-screen px-4 py-5 sm:px-8">
+    <main className="min-h-screen px-4 py-5 text-champana sm:px-8">
       <section className="mx-auto flex max-w-5xl flex-col gap-5">
-        <header className="flex flex-col gap-3 border-b border-black/10 pb-4 sm:flex-row sm:items-center sm:justify-between">
+        <header className="flex flex-col gap-3 border-b border-antiguo/15 pb-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-sm font-bold uppercase tracking-wide text-acento">Mala Junta</p>
-            <h1 className="text-3xl font-black text-tinta">{titulo}</h1>
-            <p className="mt-1 max-w-2xl text-sm text-black/65">{descripcion}</p>
+            <p className="text-sm font-bold uppercase tracking-wide text-oro">Mala Junta</p>
+            <h1 className="text-3xl font-black text-crema">{titulo}</h1>
+            <p className="mt-1 max-w-2xl text-sm text-antiguo/70">{descripcion}</p>
           </div>
-          <button onClick={salir} className="tap-target rounded-md border border-black/15 bg-white px-4 font-bold text-tinta">
+          <button onClick={salir} className="tap-target rounded-md border border-antiguo/20 bg-espresso px-4 font-bold text-champana">
             Salir
           </button>
         </header>
 
-        {mensaje ? <p className="rounded-md bg-white p-4 shadow-suave">{mensaje}</p> : null}
+        {mensaje ? <p className="rounded-md border border-antiguo/15 bg-espresso p-4 shadow-suave">{mensaje}</p> : null}
 
         {perfil ? (
           <div className="grid gap-4 sm:grid-cols-3">
-            <article className="rounded-lg border border-black/10 bg-white p-4 shadow-suave">
-              <p className="text-sm font-semibold text-black/55">Usuario activo</p>
-              <h2 className="mt-2 text-xl font-black text-tinta">{perfil.nombre}</h2>
-              <p className="mt-1 text-sm text-black/65">Rol: {perfil.rol}</p>
+            <article className="rounded-lg border border-antiguo/15 bg-espresso p-4 shadow-suave">
+              <p className="text-sm font-semibold text-antiguo/65">Usuario activo</p>
+              <h2 className="mt-2 text-xl font-black text-crema">{perfil.nombre}</h2>
+              <p className="mt-1 text-sm text-antiguo/70">Rol: {perfil.rol}</p>
             </article>
-            <article className="rounded-lg border border-black/10 bg-white p-4 shadow-suave sm:col-span-2">
-              <p className="text-sm font-semibold text-black/55">Estado F0</p>
-              <p className="mt-2 text-base text-tinta">
-                Fundación lista para conectar los flujos de la siguiente fase sin mover reglas críticas al cliente.
-              </p>
+            <article className="rounded-lg border border-antiguo/15 bg-espresso p-4 shadow-suave sm:col-span-2">
+              <p className="text-sm font-semibold text-antiguo/65">Estado</p>
+              <p className="mt-2 text-base text-champana">Sesión activa.</p>
             </article>
           </div>
         ) : null}

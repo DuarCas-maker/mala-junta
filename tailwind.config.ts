@@ -1,19 +1,31 @@
-import type { Config } from "tailwindcss";
+﻿import type { Config } from "tailwindcss";
 
 const config: Config = {
   content: ["./app/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}", "./lib/**/*.{ts,tsx}"],
   theme: {
     extend: {
       colors: {
-        tinta: "#17202a",
-        papel: "#f7f6f2",
-        noche: "#101317",
-        acento: "#c43b3b",
-        guayaba: "#f0a84f",
-        menta: "#2e9f78"
+        carbon: "#020201",
+        cafe: "#070503",
+        espresso: "#100D08",
+        champana: "#E0D1BE",
+        antiguo: "#D3C2AE",
+        humo: "#1C160F",
+        nogal: "#2A2118",
+        bronce: "#3B2F23",
+        cobre: "#4F3E2E",
+        oro: "#B1855D",
+        dorado: "#E2B07F",
+        crema: "#FBF6ED",
+        tinta: "#E0D1BE",
+        papel: "#100D08",
+        noche: "#020201",
+        acento: "#B1855D",
+        guayaba: "#E2B07F",
+        menta: "#C4B39D"
       },
       boxShadow: {
-        suave: "0 10px 30px rgba(16, 19, 23, 0.10)"
+        suave: "0 18px 44px rgba(0, 0, 0, 0.42)"
       }
     },
   },

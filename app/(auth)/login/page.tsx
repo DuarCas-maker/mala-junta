@@ -1,15 +1,20 @@
 ﻿import { LoginForm } from "@/components/login-form";
+import Image from "next/image";
 
 export default function LoginPage() {
   return (
-    <main className="flex min-h-screen items-center justify-center px-4 py-8">
-      <section className="grid w-full max-w-5xl gap-8 md:grid-cols-[1fr_420px] md:items-center">
-        <div>
-          <p className="text-sm font-black uppercase tracking-wide text-acento">Mala Junta POS</p>
-          <h1 className="mt-3 text-4xl font-black leading-tight text-tinta sm:text-5xl">Entrada operativa</h1>
-          <p className="mt-4 max-w-xl text-base leading-7 text-black/65">
-            Acceso inicial para administrador, caja y meseros. La fase F0 deja lista la identidad, roles y base de seguridad.
-          </p>
+    <main className="flex min-h-screen items-center justify-center overflow-hidden px-4 py-8">
+      <section className="grid w-full max-w-6xl gap-8 md:grid-cols-[1fr_420px] md:items-center">
+        <div className="relative min-h-[340px] overflow-hidden rounded-lg bg-carbon md:min-h-[520px]">
+          <Image
+            src="/brand/mala-junta-logo.jpeg"
+            alt="Mala Junta Bar"
+            fill
+            priority
+            sizes="(max-width: 768px) 100vw, 680px"
+            className="object-cover opacity-95 mix-blend-screen"
+          />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_22%,rgba(2,2,1,0.18)_58%,rgba(2,2,1,0.82)_100%)]" />
         </div>
         <LoginForm />
       </section>
