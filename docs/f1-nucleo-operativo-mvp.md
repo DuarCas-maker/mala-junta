@@ -7,6 +7,7 @@ Ejecutar en Supabase Studio > SQL Editor, en este orden:
 1. `supabase/migrations/202607280005_f1_nucleo_operativo_mvp.sql`
 2. `supabase/migrations/202607280006_f1_completar_operacion.sql`
 3. `supabase/migrations/202607290001_f1_pin_plano_perfiles.sql`
+4. `supabase/migrations/202607290002_f1_login_mesero_pin.sql`
 
 La segunda migracion completa F1 con:
 
@@ -19,6 +20,8 @@ La segunda migracion completa F1 con:
 - Cola local de pedidos pendientes en la pantalla de mesero.
 
 La tercera migracion ajusta `public.perfiles`: elimina `pin_hash` y deja `pin` plano por solicitud operativa temporal. Supabase Auth sigue manejando su propia contrasena interna.
+
+La cuarta migracion agrega `email_login_mesero(usuario, pin)`, usada por el login para resolver el email de Supabase Auth desde `public.perfiles`.
 
 ## Verificacion SQL
 
@@ -37,7 +40,8 @@ where proname in (
   'registrar_pago_cuenta',
   'registrar_pagos_cuenta',
   'obtener_o_crear_cuenta',
-  'anular_pedido'
+  'anular_pedido',
+  'email_login_mesero'
 )
 order by proname;
 select count(*) as motivos_anulacion
@@ -56,7 +60,7 @@ Esperado:
 - `mesas = 8`
 - `productos >= 10`
 - `sub_cuentas` y `modificaciones_pedido` existen.
-- aparecen las 6 RPC.
+- aparecen las 7 RPC.
 - `motivos_anulacion >= 1`
 - en columnas de `perfiles` aparece `pin` y no aparece `pin_hash`
 

@@ -1,8 +1,8 @@
-﻿"use client";
+"use client";
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
-import { emailMesero, rutaPorRol, type Perfil } from "@/lib/roles";
+import { rutaPorRol, type Perfil } from "@/lib/roles";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 
 type ModoLogin = "equipo" | "mesero";
@@ -36,9 +36,20 @@ export function LoginForm() {
         throw new Error("Escribe usuario y PIN de 4 dígitos.");
       }
 
-      const credenciales = modo === "mesero"
-        ? { email: emailMesero(usuario), password: pin }
-        : { email: email.trim(), password };
+      let credenciales = { email: email.trim(), password };
+
+      if (modo === "mesero") {
+        const { data: emailAuth, error: emailError } = await supabase.rpc("email_login_mesero", {
+          p_usuario_login: usuario,
+          p_pin: pin,
+        });
+
+        if (emailError || !emailAuth) {
+          throw new Error(`Mesero PIN: ${emailError?.message ?? "usuario o PIN inválido"}`);
+        }
+
+        credenciales = { email: String(emailAuth), password: pin };
+      }
 
       const loginPromise = supabase.auth.signInWithPassword(credenciales);
       const timeoutPromise = new Promise<never>((_, reject) => {
@@ -50,7 +61,8 @@ export function LoginForm() {
       const { data: authData, error: authError } = await Promise.race([loginPromise, timeoutPromise]);
 
       if (authError || !authData.user) {
-        throw new Error(`Auth: ${authError?.message ?? "credenciales inválidas"}`);
+        const detalle = authError?.message || authError?.name || JSON.stringify(authError ?? {});
+        throw new Error(`Auth: ${detalle || "credenciales inválidas"}`);
       }
 
       setMensaje("Validando perfil activo...");
