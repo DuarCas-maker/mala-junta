@@ -1,0 +1,11 @@
+.env
+.env*.local
+.next
+node_modules
+.turbo
+out
+dist
+coverage
+*.tsbuildinfo
+supabase/.branches
+supabase/.temp

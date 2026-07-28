@@ -1,0 +1,37 @@
+{
+    "name":  "mala-junta",
+    "version":  "0.1.0",
+    "private":  true,
+    "scripts":  {
+                    "dev":  "next dev",
+                    "build":  "next build",
+                    "start":  "next start",
+                    "lint":  "eslint .",
+                    "typecheck":  "tsc --noEmit",
+                    "supabase:start":  "supabase start",
+                    "supabase:reset":  "supabase db reset",
+                    "test:sql:f0":  "supabase test db --local tests/rls/f0.sql"
+                },
+    "dependencies":  {
+                         "@supabase/supabase-js":  "^2.45.4",
+                         "@tanstack/react-query":  "^5.59.16",
+                         "next":  "^15.0.3",
+                         "react":  "^19.0.0",
+                         "react-dom":  "^19.0.0"
+                     },
+    "devDependencies":  {
+                            "@types/node":  "^22.9.0",
+                            "@types/react":  "^19.0.0",
+                            "@types/react-dom":  "^19.0.0",
+                            "autoprefixer":  "^10.4.20",
+                            "eslint":  "^9.14.0",
+                            "eslint-config-next":  "^15.0.3",
+                            "postcss":  "^8.5.18",
+                            "supabase":  "^2.110.0",
+                            "tailwindcss":  "^3.4.14",
+                            "typescript":  "^5.6.3"
+                        },
+    "overrides":  {
+                      "sharp":  "^0.35.0"
+                  }
+}
