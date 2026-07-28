@@ -1,4 +1,4 @@
-﻿-- F1 - Nucleo operativo MVP: mesas, catalogo minimo, cuentas y pedidos.
+-- F1 - Nucleo operativo MVP: mesas, catalogo minimo, cuentas y pedidos.
 
 create extension if not exists pgcrypto;
 
@@ -349,7 +349,16 @@ values
 on conflict (nombre) do update set activa = excluded.activa;
 
 insert into public.productos (nombre, categoria_id, precio_venta, costo_unitario_actual, codigo_interno, stock_actual, stock_minimo, activo)
-select * from (
+select
+  v.nombre,
+  c.id as categoria_id,
+  v.precio_venta,
+  v.costo_unitario_actual,
+  v.codigo_interno,
+  v.stock_actual,
+  v.stock_minimo,
+  v.activo
+from (
   values
     ('Cerveza Poker', 'Cervezas', 8000::numeric, 4200::numeric, 'CER-POKER', 120, 24, true),
     ('Cerveza Aguila', 'Cervezas', 8000::numeric, 4200::numeric, 'CER-AGUILA', 120, 24, true),
