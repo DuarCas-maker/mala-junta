@@ -10,10 +10,10 @@ type ModoLogin = "equipo" | "mesero";
 export function LoginForm() {
   const router = useRouter();
   const [modo, setModo] = useState<ModoLogin>("equipo");
-  const [email, setEmail] = useState("admin@malajunta.local");
-  const [password, setPassword] = useState("Admin1234!");
-  const [usuario, setUsuario] = useState("mesero1");
-  const [pin, setPin] = useState("1111");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [usuario, setUsuario] = useState("");
+  const [pin, setPin] = useState("");
   const [mensaje, setMensaje] = useState<string | null>(null);
   const [cargando, setCargando] = useState(false);
 
@@ -24,14 +24,22 @@ export function LoginForm() {
 
     try {
       const supabase = supabaseBrowser();
+      if (modo === "equipo" && (!email.trim() || !password)) {
+        throw new Error("Escribe correo y contraseña.");
+      }
+
+      if (modo === "mesero" && (!usuario.trim() || pin.length !== 4)) {
+        throw new Error("Escribe usuario y PIN de 4 dígitos.");
+      }
+
       const credenciales = modo === "mesero"
         ? { email: emailMesero(usuario), password: pin }
-        : { email, password };
+        : { email: email.trim(), password };
 
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword(credenciales);
 
       if (authError || !authData.user) {
-        throw new Error(`Auth: ${authError?.message ?? "credenciales inválidas"}`);
+        throw new Error(`Auth: ${authError?.message ?? "credenciales invÃ¡lidas"}`);
       }
 
       const { data: perfil, error: perfilError } = await supabase
@@ -49,7 +57,7 @@ export function LoginForm() {
       router.push(rutaPorRol(perfil.rol));
       router.refresh();
     } catch (error) {
-      setMensaje(error instanceof Error ? error.message : "No se pudo iniciar sesión.");
+      setMensaje(error instanceof Error ? error.message : "No se pudo iniciar sesiÃ³n.");
     } finally {
       setCargando(false);
     }
@@ -87,7 +95,7 @@ export function LoginForm() {
             />
           </label>
           <label className="block text-sm font-semibold text-champana">
-            Contraseña
+            ContraseÃ±a
             <input
               className="tap-target mt-1 w-full rounded-md border border-antiguo/20 bg-carbon px-3 text-crema outline-none focus:border-dorado"
               type="password"
@@ -104,12 +112,12 @@ export function LoginForm() {
             <input
               className="tap-target mt-1 w-full rounded-md border border-antiguo/20 bg-carbon px-3 text-crema outline-none focus:border-dorado"
               value={usuario}
-              onChange={(event) => setUsuario(event.target.value)}
+              onChange={(event) => setUsuario(event.target.value.trim().toLowerCase())}
               autoComplete="username"
             />
           </label>
           <label className="block text-sm font-semibold text-champana">
-            PIN de 4 dígitos
+            PIN de 4 dÃ­gitos
             <input
               className="tap-target mt-1 w-full rounded-md border border-antiguo/20 bg-carbon px-3 text-xl tracking-widest text-crema outline-none focus:border-dorado"
               value={pin}
