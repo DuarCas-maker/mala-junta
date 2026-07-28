@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { estadoPedidoTexto } from "@/lib/format";
 import { supabaseBrowser } from "@/lib/supabase-browser";
@@ -77,7 +78,10 @@ export function BarraOperativa() {
             <h1 className="text-3xl font-black text-crema">Comandas</h1>
             <p className="text-sm text-antiguo/70">{perfil?.nombre}</p>
           </div>
-          <button onClick={salir} className="tap-target rounded-md border border-antiguo/20 bg-espresso px-4 font-bold">Salir</button>
+          <div className="flex gap-2">
+            {perfil?.rol === "admin" ? <Link href="/admin" className="tap-target rounded-md border border-antiguo/20 bg-carbon px-4 font-bold">Admin</Link> : null}
+            <button onClick={salir} className="tap-target rounded-md border border-antiguo/20 bg-espresso px-4 font-bold">Salir</button>
+          </div>
         </header>
 
         {mensaje ? <p className="rounded-md border border-antiguo/15 bg-espresso p-3 text-sm">{mensaje}</p> : null}

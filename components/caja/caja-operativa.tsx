@@ -1,5 +1,6 @@
-"use client";
+﻿"use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { estadoPedidoTexto, formatoCOP } from "@/lib/format";
 import { supabaseBrowser } from "@/lib/supabase-browser";
@@ -30,6 +31,10 @@ function meseroPedido(pedido: any) {
   return perfil?.nombre ?? "-";
 }
 
+function nombreMedio(medio: string) {
+  return mediosPago.find((item) => item.id === medio)?.nombre ?? medio;
+}
+
 export function CajaOperativa() {
   const { perfil, cargando, error, salir } = usePerfilProtegido(["caja", "admin"]);
   const [cuentas, setCuentas] = useState<Cuenta[]>([]);
@@ -37,7 +42,8 @@ export function CajaOperativa() {
   const [mensaje, setMensaje] = useState<string | null>(null);
   const [procesando, setProcesando] = useState<string | null>(null);
   const [actualizadoAt, setActualizadoAt] = useState<string | null>(null);
-  const [montos, setMontos] = useState<Record<string, Partial<Record<MedioPago, string>>>>({});
+  const [montosPago, setMontosPago] = useState<Record<string, string>>({});
+  const [mediosSeleccionados, setMediosSeleccionados] = useState<Record<string, MedioPago>>({});
   const [propinas, setPropinas] = useState<Record<string, string>>({});
   const [pendiente, setPendiente] = useState<Record<string, boolean>>({});
   const [responsables, setResponsables] = useState<Record<string, string>>({});
@@ -97,12 +103,9 @@ export function CajaOperativa() {
     return { totalAbierto, totalRecibido };
   }, [cuentas]);
 
-  function setMonto(cuentaId: string, medio: MedioPago, valor: string) {
-    setMontos((actual) => ({ ...actual, [cuentaId]: { ...actual[cuentaId], [medio]: valor } }));
-  }
-
   function limpiarPago(cuentaId: string) {
-    setMontos((actual) => ({ ...actual, [cuentaId]: {} }));
+    setMontosPago((actual) => ({ ...actual, [cuentaId]: "" }));
+    setMediosSeleccionados((actual) => ({ ...actual, [cuentaId]: "efectivo" }));
     setPropinas((actual) => ({ ...actual, [cuentaId]: "" }));
     setPendiente((actual) => ({ ...actual, [cuentaId]: false }));
     setResponsables((actual) => ({ ...actual, [cuentaId]: "" }));
@@ -122,7 +125,7 @@ export function CajaOperativa() {
   async function anularPedido(pedidoId: string) {
     const motivoId = motivoPorPedido[pedidoId];
     if (!motivoId) {
-      setMensaje("Selecciona un motivo de anulaciÃƒÂ³n.");
+      setMensaje("Selecciona un motivo de anulacion.");
       return;
     }
 
@@ -143,14 +146,14 @@ export function CajaOperativa() {
 
   async function registrarPago(cuenta: Cuenta) {
     const cuentaId = cuenta.id as string;
-    const pagos = mediosPago
-      .map((medio) => ({ medio: medio.id, monto: Number(montos[cuentaId]?.[medio.id] ?? 0) }))
-      .filter((pago) => pago.monto > 0);
+    const monto = Number(montosPago[cuentaId] ?? 0);
+    const medio = mediosSeleccionados[cuentaId] ?? "efectivo";
     const dejaPendiente = Boolean(pendiente[cuentaId]);
     const responsable = responsables[cuentaId]?.trim() ?? "";
+    const pagos = monto > 0 ? [{ medio, monto }] : [];
 
     if (pagos.length === 0 && !dejaPendiente) {
-      setMensaje("Ingresa al menos un valor o marca la cuenta como pendiente.");
+      setMensaje("Ingresa un valor de pago o marca la cuenta como pendiente.");
       return;
     }
 
@@ -172,7 +175,7 @@ export function CajaOperativa() {
 
     if (rpcError) setMensaje(rpcError.message);
     else {
-      setMensaje("Pago registrado.");
+      setMensaje("Pago registrado. Si cubrio el saldo, la cuenta sale de esta vista y queda en public.pagos.");
       limpiarPago(cuentaId);
     }
     setProcesando(null);
@@ -191,7 +194,8 @@ export function CajaOperativa() {
             <h1 className="text-3xl font-black text-crema">Cuentas y cobros</h1>
             <p className="text-sm text-antiguo/70">{perfil?.nombre}</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            {perfil?.rol === "admin" ? <Link href="/admin" className="tap-target rounded-md border border-antiguo/20 bg-carbon px-4 font-bold">Admin</Link> : null}
             <button onClick={cargar} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-4 font-bold">Refrescar</button>
             <button onClick={salir} className="tap-target rounded-md border border-antiguo/20 bg-espresso px-4 font-bold">Salir</button>
           </div>
@@ -207,7 +211,7 @@ export function CajaOperativa() {
             <p className="text-2xl font-black text-dorado">{formatoCOP(resumen.totalAbierto)}</p>
           </div>
           <div className="rounded-lg border border-antiguo/15 bg-espresso p-4">
-            <p className="text-sm text-antiguo/70">Abonos registrados</p>
+            <p className="text-sm text-antiguo/70">Abonos visibles</p>
             <p className="text-2xl font-black text-dorado">{formatoCOP(resumen.totalRecibido)}</p>
           </div>
         </div>
@@ -221,6 +225,7 @@ export function CajaOperativa() {
             const pagado = totalPagado(cuenta);
             const saldo = Math.max(total - pagado, 0);
             const pedidos = cuenta.pedidos ?? [];
+            const pagosCuenta = cuenta.pagos ?? [];
             const bloqueada = procesando === cuenta.id;
 
             return (
@@ -276,19 +281,37 @@ export function CajaOperativa() {
                   ))}
                 </div>
 
+                {pagosCuenta.length > 0 ? (
+                  <section className="mt-4 rounded-md border border-antiguo/10 bg-carbon p-3">
+                    <p className="text-sm font-bold text-dorado">Pagos registrados</p>
+                    <ul className="mt-2 space-y-1 text-sm text-antiguo/80">
+                      {pagosCuenta.map((pago: any) => (
+                        <li key={pago.id} className="flex justify-between gap-3">
+                          <span>{nombreMedio(pago.medio)}</span>
+                          <span>{formatoCOP(pago.monto)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                ) : null}
+
                 <section className="mt-4 rounded-md border border-oro/20 bg-carbon p-3">
                   <p className="text-sm font-bold text-dorado">Cobro</p>
-                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                    {mediosPago.map((medio) => (
-                      <label key={medio.id} className="text-xs font-bold text-antiguo/80">
-                        {medio.nombre}
-                        <input type="number" min="0" inputMode="numeric" value={montos[cuenta.id]?.[medio.id] ?? ""} onChange={(event) => setMonto(cuenta.id, medio.id, event.target.value)} className="tap-target mt-1 w-full rounded-md border border-antiguo/20 bg-espresso px-3 text-crema" />
-                      </label>
-                    ))}
+                  <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_180px]">
+                    <label className="text-xs font-bold text-antiguo/80">
+                      Valor
+                      <input type="number" min="0" inputMode="numeric" value={montosPago[cuenta.id] ?? ""} onChange={(event) => setMontosPago((actual) => ({ ...actual, [cuenta.id]: event.target.value }))} className="tap-target mt-1 w-full rounded-md border border-antiguo/20 bg-espresso px-3 text-crema" />
+                    </label>
+                    <label className="text-xs font-bold text-antiguo/80">
+                      Medio
+                      <select value={mediosSeleccionados[cuenta.id] ?? "efectivo"} onChange={(event) => setMediosSeleccionados((actual) => ({ ...actual, [cuenta.id]: event.target.value as MedioPago }))} className="tap-target mt-1 w-full rounded-md border border-antiguo/20 bg-espresso px-3 text-crema">
+                        {mediosPago.map((medio) => <option key={medio.id} value={medio.id}>{medio.nombre}</option>)}
+                      </select>
+                    </label>
                   </div>
                   <div className="mt-3 grid gap-2 sm:grid-cols-3">
                     <label className="text-xs font-bold text-antiguo/80">
-                      Propina
+                      Propina opcional
                       <input type="number" min="0" inputMode="numeric" value={propinas[cuenta.id] ?? ""} onChange={(event) => setPropinas((actual) => ({ ...actual, [cuenta.id]: event.target.value }))} className="tap-target mt-1 w-full rounded-md border border-antiguo/20 bg-espresso px-3 text-crema" />
                     </label>
                     <label className="flex items-center gap-2 rounded-md border border-antiguo/15 bg-espresso px-3 text-sm font-bold">
@@ -298,7 +321,7 @@ export function CajaOperativa() {
                     <input value={responsables[cuenta.id] ?? ""} onChange={(event) => setResponsables((actual) => ({ ...actual, [cuenta.id]: event.target.value }))} placeholder="Responsable" className="tap-target rounded-md border border-antiguo/20 bg-espresso px-3 text-crema placeholder:text-antiguo/50" />
                   </div>
                   <div className="mt-3 grid grid-cols-2 gap-2">
-                    <button type="button" onClick={() => setMonto(cuenta.id, "efectivo", String(saldo))} className="tap-target rounded-md border border-antiguo/20 px-3 text-sm font-bold">Efectivo exacto</button>
+                    <button type="button" onClick={() => setMontosPago((actual) => ({ ...actual, [cuenta.id]: String(saldo) }))} className="tap-target rounded-md border border-antiguo/20 px-3 text-sm font-bold">Valor exacto</button>
                     <button type="button" disabled={bloqueada} onClick={() => registrarPago(cuenta)} className="tap-target rounded-md bg-oro px-3 text-sm font-black text-carbon disabled:opacity-50">Registrar pago</button>
                   </div>
                 </section>

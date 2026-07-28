@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { formatoCOP } from "@/lib/format";
 import { supabaseBrowser } from "@/lib/supabase-browser";
@@ -31,7 +32,7 @@ function guardarPendientes(pedidos: PedidoPendiente[]) {
 }
 
 export function MeseroOperativo() {
-  const { perfil, cargando, error, salir } = usePerfilProtegido(["mesero"]);
+  const { perfil, cargando, error, salir } = usePerfilProtegido(["mesero", "admin"]);
   const [mesas, setMesas] = useState<Mesa[]>([]);
   const [productos, setProductos] = useState<Producto[]>([]);
   const [mesaId, setMesaId] = useState<string>("");
@@ -124,7 +125,7 @@ export function MeseroOperativo() {
     } catch (err) {
       if (items.length > 0) {
         guardarComoPendiente({ mesaId, items, notas });
-        setMensaje("No se pudo sincronizar. Guardé el pedido para reintentar.");
+        setMensaje("No se pudo sincronizar. Guarde el pedido para reintentar.");
         setCantidades({});
         setNotas("");
       } else {
@@ -163,7 +164,10 @@ export function MeseroOperativo() {
             <h1 className="text-3xl font-black text-crema">Nuevo pedido</h1>
             <p className="text-sm text-antiguo/70">{perfil?.nombre}</p>
           </div>
-          <button onClick={salir} className="tap-target rounded-md border border-antiguo/20 bg-espresso px-4 font-bold">Salir</button>
+          <div className="flex gap-2">
+            {perfil?.rol === "admin" ? <Link href="/admin" className="tap-target rounded-md border border-antiguo/20 bg-carbon px-4 font-bold">Admin</Link> : null}
+            <button onClick={salir} className="tap-target rounded-md border border-antiguo/20 bg-espresso px-4 font-bold">Salir</button>
+          </div>
         </header>
 
         {pendientes.length > 0 ? (

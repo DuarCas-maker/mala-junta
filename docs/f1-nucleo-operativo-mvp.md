@@ -72,6 +72,26 @@ Esperado:
 - `motivos_anulacion >= 1`
 - en columnas de `perfiles` aparece `pin` y no aparece `pin_hash`
 
+
+## Diagnostico de pagos
+
+Al registrar un pago se inserta una fila en `public.pagos` con `cuenta_id`, `medio`, `monto`, `propina`, `usuario_id` y `timestamp`. Si el pago cubre el total, `public.cuentas.estado` pasa a `pagada` y la cuenta sale de `/caja` porque esa vista solo muestra cuentas activas.
+
+```sql
+select
+  pg.id,
+  pg.cuenta_id,
+  pg.medio,
+  pg.monto,
+  pg.propina,
+  pg.timestamp,
+  c.estado as estado_cuenta,
+  c.total_cuenta
+from public.pagos pg
+join public.cuentas c on c.id = pg.cuenta_id
+order by pg.timestamp desc
+limit 20;
+```
 ## Diagnostico de cuentas
 
 Si un pedido desaparece de barra pero no lo ves en caja, ejecuta:
