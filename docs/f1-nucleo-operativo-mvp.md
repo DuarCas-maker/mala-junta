@@ -1,60 +1,83 @@
 # F1 - Nucleo operativo MVP
 
-## Migracion a ejecutar
+## Migraciones a ejecutar
 
-Ejecutar en Supabase Studio > SQL Editor:
+Ejecutar en Supabase Studio > SQL Editor, en este orden:
 
-`supabase/migrations/202607280005_f1_nucleo_operativo_mvp.sql`
+1. `supabase/migrations/202607280005_f1_nucleo_operativo_mvp.sql`
+2. `supabase/migrations/202607280006_f1_completar_operacion.sql`
 
-Esta migracion crea el nucleo operativo minimo:
+La segunda migracion completa F1 con:
 
-- `mesas`
-- `categorias`
-- `productos`
-- `cuentas`
-- `pedidos`
-- `pedido_items`
-- `pagos`
-- RPC `crear_pedido_rapido`
-- RPC `cambiar_estado_pedido`
-- RPC `registrar_pago_cuenta`
-- Seed de mesas y productos base
+- Cuentas reutilizables por mesa abierta.
+- Subcuentas base por cuenta.
+- Anulaciones con motivo obligatorio y registro en `modificaciones_pedido`.
+- Pagos mixtos por efectivo, datafono, Nequi/Daviplata y transferencia.
+- Propina editable y cuentas pendientes con responsable.
+- Realtime para `cuentas`, `pedidos`, `pedido_items` y `pagos`.
+- Cola local de pedidos pendientes en la pantalla de mesero.
 
 ## Verificacion SQL
 
-Despues de ejecutar la migracion:
+Despues de ejecutar ambas migraciones:
 
 ```sql
 select count(*) as mesas from public.mesas;
 select count(*) as productos from public.productos;
-select proname from pg_proc where proname in ('crear_pedido_rapido', 'cambiar_estado_pedido', 'registrar_pago_cuenta') order by proname;
+select to_regclass('public.sub_cuentas') as sub_cuentas;
+select to_regclass('public.modificaciones_pedido') as modificaciones_pedido;
+select proname
+from pg_proc
+where proname in (
+  'crear_pedido_rapido',
+  'cambiar_estado_pedido',
+  'registrar_pago_cuenta',
+  'registrar_pagos_cuenta',
+  'obtener_o_crear_cuenta',
+  'anular_pedido'
+)
+order by proname;
+select count(*) as motivos_anulacion
+from public.motivos
+where tipo = 'anulacion' and activo = true;
 ```
 
 Esperado:
 
 - `mesas = 8`
 - `productos >= 10`
-- las 3 RPC aparecen
+- `sub_cuentas` y `modificaciones_pedido` existen.
+- aparecen las 6 RPC.
+- `motivos_anulacion >= 1`
 
-## Prueba funcional
+## Prueba funcional local
 
-1. Entrar como mesero.
-2. Abrir `/mesero`.
-3. Seleccionar mesa o dejar `Barra directa`.
-4. Sumar productos y enviar pedido.
-5. Entrar como caja en otra ventana y abrir `/caja`.
-6. Ver el pedido, marcar `Preparar`, luego `Entregar`, luego `Cobrar`.
-7. Abrir `/barra` con usuario caja/admin y ver comandas pendientes.
+1. Iniciar la app con `npm.cmd run dev` y abrir `http://localhost:3000`.
+2. Entrar como mesero y abrir `/mesero`.
+3. Seleccionar mesa o `Barra directa`, sumar productos y enviar pedido.
+4. Entrar como caja/admin en otra ventana y abrir `/caja`.
+5. Ver la cuenta activa, marcar un pedido como `Preparar` y luego `Entregar`.
+6. Registrar un cobro con uno o varios medios de pago; opcionalmente agregar propina.
+7. Crear otro pedido y anularlo desde caja seleccionando un motivo.
+8. Abrir `/barra` y confirmar que las comandas aparecen y desaparecen al entregarlas.
+9. Para probar cola local, desconectar internet o bloquear Supabase, enviar un pedido desde `/mesero` y luego reintentar cuando vuelva la conexion.
 
-## Alcance real de esta primera F1
+## Test RLS
 
-Esto es el primer MVP operativo, no el cierre total de F1 del plan maestro. Faltan aun:
+En entorno local Supabase, despues de resetear/aplicar migraciones y seed:
 
-- Realtime real con canales Supabase en lugar de polling temporal.
-- Cuentas existentes por mesa y division avanzada.
-- Anulacion con motivo obligatorio.
-- Cola offline PWA del mesero.
-- Pagos mixtos, propina editable y cambio.
-- Fiados completos.
+```bash
+supabase test db --local tests/rls/f1.sql
+```
 
-Esos puntos siguen dentro de F1/F2 y se completan en pasos siguientes.
+Este test valida que:
+
+- Mesero puede crear pedidos por RPC.
+- Mesero no puede cambiar estados ni registrar pagos.
+- Caja puede cambiar estados, registrar pagos y anular con motivo.
+- Caja/admin no pueden borrar fisicamente cuentas o pedidos.
+- Mesero no puede leer pagos.
+
+## Estado de F1
+
+F1 queda funcional para MVP operativo: mesero toma pedidos, barra prepara comandas, caja controla cuentas, cobros y anulaciones. Las siguientes fases siguen separadas: inventario real y kardex (F2), cierre de caja (F3), DIAN-ready sin transmision (F4), reportes/auditoria ampliada (F5). F6 sigue prohibida sin autorizacion explicita.

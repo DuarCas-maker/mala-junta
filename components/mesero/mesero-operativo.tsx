@@ -7,12 +7,27 @@ import { usePerfilProtegido } from "@/lib/use-perfil-protegido";
 
 type Mesa = { id: string; nombre: string; zona: string; es_vip: boolean };
 type Producto = { id: string; nombre: string; precio_venta: number; stock_actual: number; categorias?: { nombre: string } | { nombre: string }[] | null };
-
 type Cantidades = Record<string, number>;
+type PedidoPendiente = { id: string; mesaId: string; items: { producto_id: string; cantidad: number }[]; notas: string; creado: string };
+
+const STORAGE_KEY = "mala-junta-pedidos-pendientes";
 
 function nombreCategoria(producto: Producto) {
   const categoria = Array.isArray(producto.categorias) ? producto.categorias[0] : producto.categorias;
   return categoria?.nombre ?? "Producto";
+}
+
+function leerPendientes(): PedidoPendiente[] {
+  if (typeof window === "undefined") return [];
+  try {
+    return JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "[]") as PedidoPendiente[];
+  } catch {
+    return [];
+  }
+}
+
+function guardarPendientes(pedidos: PedidoPendiente[]) {
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(pedidos));
 }
 
 export function MeseroOperativo() {
@@ -24,6 +39,11 @@ export function MeseroOperativo() {
   const [notas, setNotas] = useState("");
   const [mensaje, setMensaje] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
+  const [pendientes, setPendientes] = useState<PedidoPendiente[]>([]);
+
+  useEffect(() => {
+    setPendientes(leerPendientes());
+  }, []);
 
   useEffect(() => {
     async function cargarDatos() {
@@ -49,32 +69,64 @@ export function MeseroOperativo() {
     });
   }
 
+  async function enviarPayload(payload: { mesaId: string; items: { producto_id: string; cantidad: number }[]; notas: string }) {
+    const supabase = supabaseBrowser();
+    const { error: rpcError } = await supabase.rpc("crear_pedido_rapido", {
+      p_mesa_id: payload.mesaId || null,
+      p_items: payload.items,
+      p_notas: payload.notas || null,
+    });
+    if (rpcError) throw new Error(rpcError.message);
+  }
+
+  function guardarComoPendiente(payload: { mesaId: string; items: { producto_id: string; cantidad: number }[]; notas: string }) {
+    const nuevo: PedidoPendiente = { id: crypto.randomUUID(), ...payload, creado: new Date().toISOString() };
+    const siguientes = [nuevo, ...leerPendientes()];
+    guardarPendientes(siguientes);
+    setPendientes(siguientes);
+  }
+
   async function enviarPedido(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setMensaje(null);
     setEnviando(true);
 
+    const items = Object.entries(cantidades)
+      .filter(([, cantidad]) => cantidad > 0)
+      .map(([producto_id, cantidad]) => ({ producto_id, cantidad }));
+
     try {
-      const items = Object.entries(cantidades)
-        .filter(([, cantidad]) => cantidad > 0)
-        .map(([producto_id, cantidad]) => ({ producto_id, cantidad }));
-
       if (items.length === 0) throw new Error("Agrega al menos un producto.");
-
-      const supabase = supabaseBrowser();
-      const { error: rpcError } = await supabase.rpc("crear_pedido_rapido", {
-        p_mesa_id: mesaId || null,
-        p_items: items,
-        p_notas: notas || null,
-      });
-
-      if (rpcError) throw new Error(rpcError.message);
-
+      const payload = { mesaId, items, notas };
+      await enviarPayload(payload);
       setMensaje("Pedido enviado a caja y barra.");
       setCantidades({});
       setNotas("");
     } catch (err) {
-      setMensaje(err instanceof Error ? err.message : "No se pudo enviar el pedido.");
+      if (items.length > 0) {
+        guardarComoPendiente({ mesaId, items, notas });
+        setMensaje("No se pudo sincronizar. Guardé el pedido para reintentar.");
+        setCantidades({});
+        setNotas("");
+      } else {
+        setMensaje(err instanceof Error ? err.message : "No se pudo enviar el pedido.");
+      }
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  async function reintentarPendiente(pendiente: PedidoPendiente) {
+    setEnviando(true);
+    setMensaje("Reintentando pedido pendiente...");
+    try {
+      await enviarPayload(pendiente);
+      const restantes = leerPendientes().filter((item) => item.id !== pendiente.id);
+      guardarPendientes(restantes);
+      setPendientes(restantes);
+      setMensaje("Pedido pendiente sincronizado.");
+    } catch (err) {
+      setMensaje(err instanceof Error ? err.message : "No se pudo sincronizar el pendiente.");
     } finally {
       setEnviando(false);
     }
@@ -94,6 +146,19 @@ export function MeseroOperativo() {
           </div>
           <button onClick={salir} className="tap-target rounded-md border border-antiguo/20 bg-espresso px-4 font-bold">Salir</button>
         </header>
+
+        {pendientes.length > 0 ? (
+          <section className="rounded-lg border border-dorado/30 bg-carbon p-3">
+            <p className="text-sm font-bold text-dorado">Pedidos pendientes por sincronizar: {pendientes.length}</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {pendientes.map((pendiente) => (
+                <button key={pendiente.id} onClick={() => reintentarPendiente(pendiente)} className="tap-target rounded-md border border-antiguo/20 px-3 text-sm font-bold" disabled={enviando}>
+                  Reintentar {pendiente.items.length} items
+                </button>
+              ))}
+            </div>
+          </section>
+        ) : null}
 
         <form onSubmit={enviarPedido} className="grid gap-5 lg:grid-cols-[280px_1fr]">
           <aside className="rounded-lg border border-antiguo/15 bg-espresso p-4 shadow-suave">
