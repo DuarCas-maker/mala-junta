@@ -6,6 +6,7 @@ Ejecutar en Supabase Studio > SQL Editor, en este orden:
 
 1. `supabase/migrations/202607280005_f1_nucleo_operativo_mvp.sql`
 2. `supabase/migrations/202607280006_f1_completar_operacion.sql`
+3. `supabase/migrations/202607290001_f1_pin_plano_perfiles.sql`
 
 La segunda migracion completa F1 con:
 
@@ -16,6 +17,8 @@ La segunda migracion completa F1 con:
 - Propina editable y cuentas pendientes con responsable.
 - Realtime para `cuentas`, `pedidos`, `pedido_items` y `pagos`.
 - Cola local de pedidos pendientes en la pantalla de mesero.
+
+La tercera migracion ajusta `public.perfiles`: elimina `pin_hash` y deja `pin` plano por solicitud operativa temporal. Supabase Auth sigue manejando su propia contrasena interna.
 
 ## Verificacion SQL
 
@@ -40,6 +43,12 @@ order by proname;
 select count(*) as motivos_anulacion
 from public.motivos
 where tipo = 'anulacion' and activo = true;
+select column_name
+from information_schema.columns
+where table_schema = 'public'
+  and table_name = 'perfiles'
+  and column_name in ('pin', 'pin_hash')
+order by column_name;
 ```
 
 Esperado:
@@ -49,6 +58,7 @@ Esperado:
 - `sub_cuentas` y `modificaciones_pedido` existen.
 - aparecen las 6 RPC.
 - `motivos_anulacion >= 1`
+- en columnas de `perfiles` aparece `pin` y no aparece `pin_hash`
 
 ## Prueba funcional local
 

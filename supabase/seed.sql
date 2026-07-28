@@ -1,4 +1,4 @@
-﻿insert into auth.users (
+insert into auth.users (
   id,
   instance_id,
   aud,
@@ -38,13 +38,13 @@ values
   ('00000000-0000-0000-0000-000000000113', '00000000-0000-0000-0000-000000000013', '{"sub":"00000000-0000-0000-0000-000000000013","email":"mesero3@mesero.malajunta.local"}', 'email', 'mesero3@mesero.malajunta.local', now(), now(), now())
 on conflict (provider, provider_id) do nothing;
 
-insert into public.perfiles (id, auth_user_id, nombre, usuario_login, rol, pin_hash, activo)
+insert into public.perfiles (id, auth_user_id, nombre, usuario_login, rol, pin, activo)
 values
   ('10000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001', 'Administrador', null, 'admin', null, true),
   ('10000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000002', 'Caja Principal', null, 'caja', null, true),
-  ('10000000-0000-0000-0000-000000000011', '00000000-0000-0000-0000-000000000011', 'Mesero 1', 'mesero1', 'mesero', crypt('1111', gen_salt('bf')), true),
-  ('10000000-0000-0000-0000-000000000012', '00000000-0000-0000-0000-000000000012', 'Mesero 2', 'mesero2', 'mesero', crypt('2222', gen_salt('bf')), true),
-  ('10000000-0000-0000-0000-000000000013', '00000000-0000-0000-0000-000000000013', 'Mesero 3', 'mesero3', 'mesero', crypt('3333', gen_salt('bf')), true)
+  ('10000000-0000-0000-0000-000000000011', '00000000-0000-0000-0000-000000000011', 'Mesero 1', 'mesero1', 'mesero', '1111', true),
+  ('10000000-0000-0000-0000-000000000012', '00000000-0000-0000-0000-000000000012', 'Mesero 2', 'mesero2', 'mesero', '2222', true),
+  ('10000000-0000-0000-0000-000000000013', '00000000-0000-0000-0000-000000000013', 'Mesero 3', 'mesero3', 'mesero', '3333', true)
 on conflict (id) do nothing;
 
 insert into public.parametros (clave, valor, descripcion)
