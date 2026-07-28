@@ -15,7 +15,7 @@ export function LoginForm() {
   const [password, setPassword] = useState("");
   const [usuario, setUsuario] = useState("");
   const [pin, setPin] = useState("");
-  const [mensaje, setMensaje] = useState<string | null>(null);
+  const [mensaje, setMensaje] = useState<string>("Selecciona el tipo de acceso e ingresa tus datos.");
   const [tipoMensaje, setTipoMensaje] = useState<TipoMensaje>("info");
   const [cargando, setCargando] = useState(false);
 
@@ -79,36 +79,51 @@ export function LoginForm() {
     }
   }
 
+  function seleccionarModo(siguiente: ModoLogin) {
+    setModo(siguiente);
+    setTipoMensaje("info");
+    setMensaje(siguiente === "equipo" ? "Acceso seleccionado: Admin / Caja." : "Acceso seleccionado: Mesero PIN.");
+  }
+
   const mensajeClase = tipoMensaje === "error"
-    ? "border-red-300/30 bg-red-950/40 text-red-100"
+    ? "border-red-300/40 bg-red-950/50 text-red-50"
     : tipoMensaje === "ok"
-      ? "border-emerald-300/30 bg-emerald-950/30 text-emerald-100"
-      : "border-antiguo/20 bg-carbon text-champana";
+      ? "border-emerald-300/30 bg-emerald-950/35 text-emerald-100"
+      : "border-oro/25 bg-carbon text-champana";
+
+  const tabBase = "tap-target rounded-md border px-3 py-2 text-center transition";
+  const tabActivo = "border-dorado bg-oro text-carbon shadow-[0_0_0_2px_rgba(226,176,127,0.25)]";
+  const tabInactivo = "border-antiguo/15 bg-espresso text-antiguo hover:border-oro/50";
 
   return (
     <form onSubmit={iniciarSesion} className="w-full rounded-lg border border-antiguo/20 bg-espresso/92 p-5 shadow-suave backdrop-blur">
-      <div className="mb-5 grid grid-cols-2 rounded-md border border-antiguo/15 bg-carbon p-1 text-sm font-semibold">
-        <button
-          type="button"
-          className={`tap-target rounded px-3 ${modo === "equipo" ? "bg-oro text-carbon" : "text-champana"}`}
-          onClick={() => {
-            setModo("equipo");
-            setMensaje(null);
-          }}
-        >
-          Admin / Caja
-        </button>
-        <button
-          type="button"
-          className={`tap-target rounded px-3 ${modo === "mesero" ? "bg-oro text-carbon" : "text-champana"}`}
-          onClick={() => {
-            setModo("mesero");
-            setMensaje(null);
-          }}
-        >
-          Mesero PIN
-        </button>
-      </div>
+      <fieldset className="mb-5">
+        <legend className="mb-2 text-xs font-black uppercase tracking-wide text-oro">Tipo de acceso</legend>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            aria-pressed={modo === "equipo"}
+            className={`${tabBase} ${modo === "equipo" ? tabActivo : tabInactivo}`}
+            onClick={() => seleccionarModo("equipo")}
+          >
+            <span className="block text-sm font-black">Admin / Caja</span>
+            <span className="mt-1 block text-[11px] font-bold uppercase tracking-wide opacity-80">
+              {modo === "equipo" ? "Seleccionado" : "Correo"}
+            </span>
+          </button>
+          <button
+            type="button"
+            aria-pressed={modo === "mesero"}
+            className={`${tabBase} ${modo === "mesero" ? tabActivo : tabInactivo}`}
+            onClick={() => seleccionarModo("mesero")}
+          >
+            <span className="block text-sm font-black">Mesero PIN</span>
+            <span className="mt-1 block text-[11px] font-bold uppercase tracking-wide opacity-80">
+              {modo === "mesero" ? "Seleccionado" : "Usuario + PIN"}
+            </span>
+          </button>
+        </div>
+      </fieldset>
 
       {modo === "equipo" ? (
         <div className="space-y-4">
@@ -158,7 +173,7 @@ export function LoginForm() {
         </div>
       )}
 
-      {mensaje ? <p className={`mt-4 rounded-md border p-3 text-sm ${mensajeClase}`}>{mensaje}</p> : null}
+      <p className={`mt-4 rounded-md border p-3 text-sm ${mensajeClase}`}>{mensaje}</p>
 
       <button
         type="submit"
