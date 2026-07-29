@@ -128,7 +128,7 @@ left join public.movimientos_inventario mi on mi.producto_id = p.id
 where public.es_admin()
   and p.activo = true
 group by p.id, p.nombre, c.nombre, p.stock_actual, p.stock_minimo, p.costo_unitario_actual
-order by coalesce(unidades_vendidas_30d, 0) desc, p.nombre;
+order by 7 desc, p.nombre;
 
 create or replace view public.v_metricas_diferencias_auditoria
 with (security_invoker = true)
