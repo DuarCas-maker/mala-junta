@@ -53,6 +53,11 @@ export function CajaOperativa() {
   const [envioDestinos, setEnvioDestinos] = useState<Record<string, string>>({});
   const [motivoPorPedido, setMotivoPorPedido] = useState<Record<string, string>>({});
   const [observacionPorPedido, setObservacionPorPedido] = useState<Record<string, string>>({});
+  const [requiereAperturaCaja, setRequiereAperturaCaja] = useState(false);
+
+  const manejarResumenCaja = useCallback((resumenCaja: { requiere_apertura?: boolean }) => {
+    setRequiereAperturaCaja(Boolean(resumenCaja.requiere_apertura));
+  }, []);
 
   const cargar = useCallback(async () => {
     const supabase = supabaseBrowser();
@@ -123,7 +128,7 @@ export function CajaOperativa() {
     setProcesando(pedidoId);
     const supabase = supabaseBrowser();
     const { error: rpcError } = await supabase.rpc("cambiar_estado_pedido", { p_pedido_id: pedidoId, p_estado: estado });
-    if (rpcError) setMensaje(rpcError.message);
+    if (rpcError) setMensaje(rpcError.message === "caja_no_abierta" ? "Debes abrir caja antes de registrar pagos." : rpcError.message);
     else setMensaje("Estado actualizado.");
     setProcesando(null);
     await cargar();
@@ -145,13 +150,18 @@ export function CajaOperativa() {
       p_observacion: observacionPorPedido[pedidoId] || null,
     });
 
-    if (rpcError) setMensaje(rpcError.message);
+    if (rpcError) setMensaje(rpcError.message === "caja_no_abierta" ? "Debes abrir caja antes de registrar pagos." : rpcError.message);
     else setMensaje("Pedido anulado con motivo.");
     setProcesando(null);
     await cargar();
   }
 
   async function registrarPago(cuenta: Cuenta) {
+    if (requiereAperturaCaja) {
+      setMensaje("Debes abrir caja antes de registrar pagos.");
+      return;
+    }
+
     const cuentaId = cuenta.id as string;
     const monto = Number(montosPago[cuentaId] ?? 0);
     const medio = mediosSeleccionados[cuentaId] ?? "efectivo";
@@ -195,7 +205,7 @@ export function CajaOperativa() {
       p_envio: envioPayload,
     });
 
-    if (rpcError) setMensaje(rpcError.message);
+    if (rpcError) setMensaje(rpcError.message === "caja_no_abierta" ? "Debes abrir caja antes de registrar pagos." : rpcError.message);
     else {
       setMensaje(pagoData?.documento ? `Pago registrado. Documento ${pagoData.documento.numero} generado como comprobante interno no fiscal.` : "Pago registrado. Si cubrio el saldo, la cuenta sale de esta vista y queda en public.pagos.");
       limpiarPago(cuentaId);
@@ -223,7 +233,7 @@ export function CajaOperativa() {
           </div>
         </header>
 
-        <CierreCajaPanel perfil={perfil!} />
+        <CierreCajaPanel perfil={perfil!} onResumenChange={manejarResumenCaja} />
 
         <div className="grid gap-3 md:grid-cols-3">
           <div className="rounded-lg border border-antiguo/15 bg-espresso p-4">
@@ -384,7 +394,7 @@ export function CajaOperativa() {
 
                   <div className="mt-3 grid grid-cols-2 gap-2">
                     <button type="button" onClick={() => setMontosPago((actual) => ({ ...actual, [cuenta.id]: String(saldo) }))} className="tap-target rounded-md border border-antiguo/20 px-3 text-sm font-bold">Valor exacto</button>
-                    <button type="button" disabled={bloqueada} onClick={() => registrarPago(cuenta)} className="tap-target rounded-md bg-oro px-3 text-sm font-black text-carbon disabled:opacity-50">Registrar pago</button>
+                    <button type="button" disabled={bloqueada || requiereAperturaCaja} onClick={() => registrarPago(cuenta)} className="tap-target rounded-md bg-oro px-3 text-sm font-black text-carbon disabled:opacity-50">{requiereAperturaCaja ? "Abre caja primero" : "Registrar pago"}</button>
                   </div>
                 </section>
               </article>

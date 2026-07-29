@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { formatoCOP } from "@/lib/format";
@@ -25,7 +25,7 @@ const medios: Record<string, string> = {
   transferencia: "Transferencia",
 };
 
-export function CierreCajaPanel({ perfil }: { perfil: Perfil }) {
+export function CierreCajaPanel({ perfil, onResumenChange }: { perfil: Perfil; onResumenChange?: (resumen: ResumenCaja) => void }) {
   const [resumen, setResumen] = useState<ResumenCaja | null>(null);
   const [motivos, setMotivos] = useState<Motivo[]>([]);
   const [baseInicial, setBaseInicial] = useState("");
@@ -50,9 +50,11 @@ export function CierreCajaPanel({ perfil }: { perfil: Perfil }) {
       return;
     }
     if (motivosError) setMensaje(motivosError.message);
-    setResumen(data as ResumenCaja);
+    const resumenCaja = data as ResumenCaja;
+    setResumen(resumenCaja);
+    onResumenChange?.(resumenCaja);
     setMotivos((motivosData ?? []) as Motivo[]);
-  }, []);
+  }, [onResumenChange]);
 
   useEffect(() => {
     cargar();
