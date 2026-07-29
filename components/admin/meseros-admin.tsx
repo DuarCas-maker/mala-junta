@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { CatalogoStockAdminPanel } from "@/components/admin/catalogo-stock-admin";
 import { InventarioAdminPanel } from "@/components/admin/inventario-admin";
 import { MetricasAdminPanel } from "@/components/admin/metricas-admin";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
@@ -216,7 +217,7 @@ export function MeserosAdmin() {
           {mensaje ? <p className="mb-4 rounded-md border border-antiguo/15 bg-espresso p-3 text-sm font-semibold shadow-suave">{mensaje}</p> : null}
 
           {moduloActivo === "metricas" ? <MetricasAdminPanel /> : null}
-          {moduloActivo === "catalogo" ? <InventarioAdminPanel vista="catalogo" /> : null}
+          {moduloActivo === "catalogo" ? <CatalogoStockAdminPanel /> : null}
           {moduloActivo === "auditoria" ? <InventarioAdminPanel vista="auditoria" /> : null}
           {moduloActivo === "usuarios" ? (
             <UsuariosAdminPanel
