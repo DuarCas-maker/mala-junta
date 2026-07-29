@@ -251,48 +251,53 @@ values
   ('ajuste_inventario', 'Consumo interno', true)
 on conflict (tipo, texto) do update set activo = excluded.activo;
 
-create temp table if not exists f3_stock_inicial_tmp (
-  producto_id uuid primary key,
-  stock_inicial int not null
-);
+do $$
+declare
+  v_producto record;
+  v_motivo_id uuid;
+  v_admin_id uuid;
+begin
+  select id into v_motivo_id
+  from public.motivos
+  where tipo = 'ajuste_inventario'
+    and texto = 'Stock inicial F3'
+  limit 1;
 
-truncate table f3_stock_inicial_tmp;
+  select id into v_admin_id
+  from public.perfiles
+  where rol = 'admin'
+  order by created_at
+  limit 1;
 
-insert into f3_stock_inicial_tmp (producto_id, stock_inicial)
-select p.id, p.stock_actual
-from public.productos p
-where p.stock_actual <> 0
-  and not exists (
-    select 1
-    from public.movimientos_inventario mi
-    where mi.producto_id = p.id
-      and mi.referencia_tipo = 'migracion_f3_stock_inicial'
-  );
+  for v_producto in
+    select p.id, p.stock_actual
+    from public.productos p
+    where p.stock_actual <> 0
+      and not exists (
+        select 1
+        from public.movimientos_inventario mi
+        where mi.producto_id = p.id
+          and mi.referencia_tipo = 'migracion_f3_stock_inicial'
+      )
+  loop
+    update public.productos
+    set stock_actual = 0
+    where id = v_producto.id;
 
-update public.productos p
-set stock_actual = 0
-where exists (
-  select 1
-  from f3_stock_inicial_tmp s
-  where s.producto_id = p.id
-);
-
-insert into public.movimientos_inventario (producto_id, tipo, cantidad, referencia_tipo, referencia_id, motivo_id, usuario_id)
-select
-  s.producto_id,
-  'ajuste',
-  s.stock_inicial,
-  'migracion_f3_stock_inicial',
-  s.producto_id,
-  m.id,
-  a.id
-from f3_stock_inicial_tmp s
-join public.motivos m on m.tipo = 'ajuste_inventario' and m.texto = 'Stock inicial F3'
-left join lateral (
-  select id from public.perfiles where rol = 'admin' order by created_at limit 1
-) a on true;
-
-drop table if exists f3_stock_inicial_tmp;
+    insert into public.movimientos_inventario (
+      producto_id, tipo, cantidad, referencia_tipo, referencia_id, motivo_id, usuario_id
+    )
+    values (
+      v_producto.id,
+      'ajuste',
+      v_producto.stock_actual,
+      'migracion_f3_stock_inicial',
+      v_producto.id,
+      v_motivo_id,
+      v_admin_id
+    );
+  end loop;
+end $$;
 
 update public.productos
 set presentacion_compra = 'caja x24', factor_compra = 24
