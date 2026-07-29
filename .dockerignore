@@ -1,0 +1,24 @@
+.git
+.next
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+.env
+.env.*
+
+.turbo
+out
+dist
+coverage
+*.tsbuildinfo
+
+dev-server*.log
+README.md
+docs
+tests
+CONTEXTO INICIAL
+supabase/.branches
+supabase/.temp
