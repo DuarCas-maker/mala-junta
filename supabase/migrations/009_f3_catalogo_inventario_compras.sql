@@ -251,41 +251,56 @@ values
   ('ajuste_inventario', 'Consumo interno', true)
 on conflict (tipo, texto) do update set activo = excluded.activo;
 
-with motivo as (
-  select id from public.motivos where tipo = 'ajuste_inventario' and texto = 'Stock inicial F3' limit 1
-),
-admin as (
-  select id from public.perfiles where rol = 'admin' order by created_at limit 1
-),
-base as (
-  select p.id, p.stock_actual
-  from public.productos p
-  where p.stock_actual <> 0
-    and not exists (
-      select 1
-      from public.movimientos_inventario mi
-      where mi.producto_id = p.id
-        and mi.referencia_tipo = 'migracion_f3_stock_inicial'
-    )
-),
-reset as (
-  update public.productos p
-  set stock_actual = 0
-  from base b
-  where p.id = b.id
-  returning p.id
-)
+create temp table if not exists f3_stock_inicial_tmp (
+  producto_id uuid primary key,
+  stock_inicial int not null
+);
+
+truncate table f3_stock_inicial_tmp;
+
+insert into f3_stock_inicial_tmp (producto_id, stock_inicial)
+select p.id, p.stock_actual
+from public.productos p
+where p.stock_actual <> 0
+  and not exists (
+    select 1
+    from public.movimientos_inventario mi
+    where mi.producto_id = p.id
+      and mi.referencia_tipo = 'migracion_f3_stock_inicial'
+  );
+
+update public.productos p
+set stock_actual = 0
+where exists (
+  select 1
+  from f3_stock_inicial_tmp s
+  where s.producto_id = p.id
+);
+
 insert into public.movimientos_inventario (producto_id, tipo, cantidad, referencia_tipo, referencia_id, motivo_id, usuario_id)
-select b.id, 'ajuste', b.stock_actual, 'migracion_f3_stock_inicial', b.id, motivo.id, admin.id
-from base b
-cross join motivo
-left join admin on true;
+select
+  s.producto_id,
+  'ajuste',
+  s.stock_inicial,
+  'migracion_f3_stock_inicial',
+  s.producto_id,
+  m.id,
+  a.id
+from f3_stock_inicial_tmp s
+join public.motivos m on m.tipo = 'ajuste_inventario' and m.texto = 'Stock inicial F3'
+left join lateral (
+  select id from public.perfiles where rol = 'admin' order by created_at limit 1
+) a on true;
+
+drop table if exists f3_stock_inicial_tmp;
 
 update public.productos
 set presentacion_compra = 'caja x24', factor_compra = 24
 where codigo_interno in ('CER-POKER','CER-AGUILA','CER-CLUB');
 
-
+update public.productos
+set presentacion_compra = 'botella', factor_compra = 1
+where codigo_interno like 'LIC-%';
 
 update public.productos
 set activo = false
