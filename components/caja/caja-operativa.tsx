@@ -48,6 +48,9 @@ export function CajaOperativa() {
   const [propinas, setPropinas] = useState<Record<string, string>>({});
   const [pendiente, setPendiente] = useState<Record<string, boolean>>({});
   const [responsables, setResponsables] = useState<Record<string, string>>({});
+  const [adquirientes, setAdquirientes] = useState<Record<string, { razon_social: string; tipo_id: string; numero_id: string; correo: string; telefono: string }>>({});
+  const [envioCanales, setEnvioCanales] = useState<Record<string, "correo" | "whatsapp">>({});
+  const [envioDestinos, setEnvioDestinos] = useState<Record<string, string>>({});
   const [motivoPorPedido, setMotivoPorPedido] = useState<Record<string, string>>({});
   const [observacionPorPedido, setObservacionPorPedido] = useState<Record<string, string>>({});
 
@@ -110,6 +113,9 @@ export function CajaOperativa() {
     setPropinas((actual) => ({ ...actual, [cuentaId]: "" }));
     setPendiente((actual) => ({ ...actual, [cuentaId]: false }));
     setResponsables((actual) => ({ ...actual, [cuentaId]: "" }));
+    setAdquirientes((actual) => ({ ...actual, [cuentaId]: { razon_social: "", tipo_id: "CC", numero_id: "", correo: "", telefono: "" } }));
+    setEnvioCanales((actual) => ({ ...actual, [cuentaId]: "correo" }));
+    setEnvioDestinos((actual) => ({ ...actual, [cuentaId]: "" }));
   }
 
   async function cambiarEstado(pedidoId: string, estado: string) {
@@ -152,6 +158,19 @@ export function CajaOperativa() {
     const dejaPendiente = Boolean(pendiente[cuentaId]);
     const responsable = responsables[cuentaId]?.trim() ?? "";
     const pagos = monto > 0 ? [{ medio, monto }] : [];
+    const adquiriente = adquirientes[cuentaId];
+    const adquirientePayload = adquiriente && (adquiriente.razon_social || adquiriente.numero_id || adquiriente.correo || adquiriente.telefono)
+      ? {
+          razon_social: adquiriente.razon_social,
+          tipo_id: adquiriente.tipo_id || "CC",
+          numero_id: adquiriente.numero_id,
+          correo: adquiriente.correo || null,
+          telefono: adquiriente.telefono || null,
+        }
+      : null;
+    const envioPayload = envioDestinos[cuentaId]
+      ? { canal: envioCanales[cuentaId] ?? "correo", destino: envioDestinos[cuentaId] }
+      : null;
 
     if (pagos.length === 0 && !dejaPendiente) {
       setMensaje("Ingresa un valor de pago o marca la cuenta como pendiente.");
@@ -166,17 +185,19 @@ export function CajaOperativa() {
     setMensaje(null);
     setProcesando(cuentaId);
     const supabase = supabaseBrowser();
-    const { error: rpcError } = await supabase.rpc("registrar_pagos_cuenta", {
+    const { data: pagoData, error: rpcError } = await supabase.rpc("registrar_pagos_cuenta_dian", {
       p_cuenta_id: cuentaId,
       p_pagos: pagos,
       p_propina: Number(propinas[cuentaId] ?? 0),
       p_dejar_pendiente: dejaPendiente,
       p_responsable_pendiente: responsable || null,
+      p_adquiriente: adquirientePayload,
+      p_envio: envioPayload,
     });
 
     if (rpcError) setMensaje(rpcError.message);
     else {
-      setMensaje("Pago registrado. Si cubrio el saldo, la cuenta sale de esta vista y queda en public.pagos.");
+      setMensaje(pagoData?.documento ? `Pago registrado. Documento ${pagoData.documento.numero} generado como comprobante interno no fiscal.` : "Pago registrado. Si cubrio el saldo, la cuenta sale de esta vista y queda en public.pagos.");
       limpiarPago(cuentaId);
     }
     setProcesando(null);
@@ -298,6 +319,20 @@ export function CajaOperativa() {
                   </section>
                 ) : null}
 
+                {(cuenta.documentos ?? []).length > 0 ? (
+                  <section className="mt-4 rounded-md border border-oro/20 bg-carbon p-3">
+                    <p className="text-sm font-bold text-dorado">Comprobantes internos</p>
+                    <ul className="mt-2 space-y-1 text-sm text-antiguo/80">
+                      {(cuenta.documentos ?? []).map((documento: any) => (
+                        <li key={documento.id} className="rounded-md border border-antiguo/10 bg-espresso p-2">
+                          <div className="flex justify-between gap-3"><span>{documento.numero} - {documento.tipo}</span><span>{formatoCOP(documento.total)}</span></div>
+                          <p className="text-xs text-antiguo/55">{documento.etiqueta_no_fiscal}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                ) : null}
+
                 <section className="mt-4 rounded-md border border-oro/20 bg-carbon p-3">
                   <p className="text-sm font-bold text-dorado">Cobro</p>
                   <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_180px]">
@@ -323,6 +358,30 @@ export function CajaOperativa() {
                     </label>
                     <input value={responsables[cuenta.id] ?? ""} onChange={(event) => setResponsables((actual) => ({ ...actual, [cuenta.id]: event.target.value }))} placeholder="Responsable" className="tap-target rounded-md border border-antiguo/20 bg-espresso px-3 text-crema placeholder:text-antiguo/50" />
                   </div>
+
+                  <div className="mt-3 rounded-md border border-antiguo/10 bg-espresso p-3">
+                    <p className="text-xs font-bold uppercase tracking-wide text-oro">Datos DIAN-ready</p>
+                    <p className="mt-1 text-xs text-antiguo/60">Si la venta supera 5 UVT, la base exige nombre/razon social y documento. El comprobante es interno, no fiscal.</p>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_110px_150px]">
+                      <input value={adquirientes[cuenta.id]?.razon_social ?? ""} onChange={(event) => setAdquirientes((actual) => ({ ...actual, [cuenta.id]: { ...(actual[cuenta.id] ?? { tipo_id: "CC", numero_id: "", correo: "", telefono: "" }), razon_social: event.target.value } }))} placeholder="Nombre o razon social" className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema placeholder:text-antiguo/50" />
+                      <select value={adquirientes[cuenta.id]?.tipo_id ?? "CC"} onChange={(event) => setAdquirientes((actual) => ({ ...actual, [cuenta.id]: { ...(actual[cuenta.id] ?? { razon_social: "", numero_id: "", correo: "", telefono: "" }), tipo_id: event.target.value } }))} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
+                        <option value="CC">CC</option>
+                        <option value="NIT">NIT</option>
+                        <option value="CE">CE</option>
+                        <option value="PAS">PAS</option>
+                      </select>
+                      <input value={adquirientes[cuenta.id]?.numero_id ?? ""} onChange={(event) => setAdquirientes((actual) => ({ ...actual, [cuenta.id]: { ...(actual[cuenta.id] ?? { razon_social: "", tipo_id: "CC", correo: "", telefono: "" }), numero_id: event.target.value } }))} placeholder="Cedula/NIT" className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema placeholder:text-antiguo/50" />
+                    </div>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_130px_1fr]">
+                      <input value={adquirientes[cuenta.id]?.correo ?? ""} onChange={(event) => setAdquirientes((actual) => ({ ...actual, [cuenta.id]: { ...(actual[cuenta.id] ?? { razon_social: "", tipo_id: "CC", numero_id: "", telefono: "" }), correo: event.target.value } }))} placeholder="Correo opcional" className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema placeholder:text-antiguo/50" />
+                      <select value={envioCanales[cuenta.id] ?? "correo"} onChange={(event) => setEnvioCanales((actual) => ({ ...actual, [cuenta.id]: event.target.value as "correo" | "whatsapp" }))} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
+                        <option value="correo">Correo</option>
+                        <option value="whatsapp">WhatsApp</option>
+                      </select>
+                      <input value={envioDestinos[cuenta.id] ?? ""} onChange={(event) => setEnvioDestinos((actual) => ({ ...actual, [cuenta.id]: event.target.value }))} placeholder="Destino comprobante opcional" className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema placeholder:text-antiguo/50" />
+                    </div>
+                  </div>
+
                   <div className="mt-3 grid grid-cols-2 gap-2">
                     <button type="button" onClick={() => setMontosPago((actual) => ({ ...actual, [cuenta.id]: String(saldo) }))} className="tap-target rounded-md border border-antiguo/20 px-3 text-sm font-bold">Valor exacto</button>
                     <button type="button" disabled={bloqueada} onClick={() => registrarPago(cuenta)} className="tap-target rounded-md bg-oro px-3 text-sm font-black text-carbon disabled:opacity-50">Registrar pago</button>
