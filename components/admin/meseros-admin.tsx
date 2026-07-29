@@ -1,6 +1,7 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
+import { InventarioAdminPanel } from "@/components/admin/inventario-admin";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Perfil } from "@/lib/roles";
@@ -162,6 +163,8 @@ export function MeserosAdmin() {
             </Link>
           ))}
         </div>
+
+        <InventarioAdminPanel />
 
         <div className="grid gap-5 lg:grid-cols-[360px_1fr]">
           <form onSubmit={crearMesero} className="rounded-lg border border-antiguo/15 bg-espresso p-4 shadow-suave">

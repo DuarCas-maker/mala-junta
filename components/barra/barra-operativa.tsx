@@ -24,7 +24,7 @@ export function BarraOperativa() {
     const supabase = supabaseBrowser();
     const { data, error: queryError } = await supabase
       .from("pedidos")
-      .select("id,estado,enviado_at,notas,cuentas(mesas(nombre,zona)),pedido_items(id,cantidad,notas,productos(nombre))")
+      .select("id,estado,enviado_at,notas,cuentas(mesas(nombre,zona)),pedido_items(id,cantidad,notas,productos(nombre),combos(nombre))")
       .in("estado", ["enviado", "en_preparacion"])
       .order("enviado_at", { ascending: true });
 
@@ -102,7 +102,7 @@ export function BarraOperativa() {
               <ul className="mt-4 space-y-2">
                 {(pedido.pedido_items ?? []).map((item: any) => (
                   <li key={item.id} className="border-t border-antiguo/10 pt-2 text-sm">
-                    <span className="font-bold text-crema">{item.cantidad} x {item.productos?.nombre}</span>
+                    <span className="font-bold text-crema">{item.cantidad} x {item.productos?.nombre ?? item.combos?.nombre}</span>
                     {item.notas ? <p className="text-antiguo/70">{item.notas}</p> : null}
                   </li>
                 ))}

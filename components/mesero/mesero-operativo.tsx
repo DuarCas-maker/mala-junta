@@ -7,14 +7,24 @@ import { supabaseBrowser } from "@/lib/supabase-browser";
 import { usePerfilProtegido } from "@/lib/use-perfil-protegido";
 
 type Mesa = { id: string; nombre: string; zona: string; es_vip: boolean };
-type Producto = { id: string; nombre: string; precio_venta: number; stock_actual: number; categorias?: { nombre: string } | { nombre: string }[] | null };
+type ItemVenta = {
+  clave: string;
+  id: string;
+  tipo: "producto" | "combo";
+  nombre: string;
+  precio_venta: number;
+  stock_actual?: number;
+  categorias?: { nombre: string } | { nombre: string }[] | null;
+};
 type Cantidades = Record<string, number>;
-type PedidoPendiente = { id: string; mesaId: string; items: { producto_id: string; cantidad: number }[]; notas: string; creado: string };
+type PedidoItemPayload = { producto_id?: string; combo_id?: string; cantidad: number };
+type PedidoPendiente = { id: string; mesaId: string; items: PedidoItemPayload[]; notas: string; creado: string };
 
 const STORAGE_KEY = "mala-junta-pedidos-pendientes";
 
-function nombreCategoria(producto: Producto) {
-  const categoria = Array.isArray(producto.categorias) ? producto.categorias[0] : producto.categorias;
+function nombreCategoria(item: ItemVenta) {
+  if (item.tipo === "combo") return "Combo";
+  const categoria = Array.isArray(item.categorias) ? item.categorias[0] : item.categorias;
   return categoria?.nombre ?? "Producto";
 }
 
@@ -34,7 +44,7 @@ function guardarPendientes(pedidos: PedidoPendiente[]) {
 export function MeseroOperativo() {
   const { perfil, cargando, error, salir } = usePerfilProtegido(["mesero", "admin"]);
   const [mesas, setMesas] = useState<Mesa[]>([]);
-  const [productos, setProductos] = useState<Producto[]>([]);
+  const [itemsVenta, setItemsVenta] = useState<ItemVenta[]>([]);
   const [mesaId, setMesaId] = useState<string>("");
   const [cantidades, setCantidades] = useState<Cantidades>({});
   const [notas, setNotas] = useState("");
@@ -50,26 +60,45 @@ export function MeseroOperativo() {
     let activo = true;
 
     async function cargarDatos() {
-      setMensaje("Cargando mesas y productos...");
+      setMensaje("Cargando mesas, productos y combos...");
       const supabase = supabaseBrowser();
-      const [{ data: mesasData, error: mesasError }, { data: productosData, error: productosError }] = await Promise.all([
+      const [{ data: mesasData, error: mesasError }, { data: productosData, error: productosError }, { data: combosData, error: combosError }] = await Promise.all([
         supabase.from("mesas").select("id,nombre,zona,es_vip").eq("activa", true).order("nombre"),
         supabase.from("productos").select("id,nombre,precio_venta,stock_actual,categorias(nombre)").eq("activo", true).order("nombre"),
+        supabase.from("combos").select("id,nombre,precio_venta").eq("activo", true).order("nombre"),
       ]);
 
       if (mesasError) throw mesasError;
       if (productosError) throw productosError;
+      if (combosError) throw combosError;
+
+      const productos = ((productosData ?? []) as any[]).map((producto) => ({
+        clave: `producto:${producto.id}`,
+        id: producto.id,
+        tipo: "producto" as const,
+        nombre: producto.nombre,
+        precio_venta: Number(producto.precio_venta),
+        stock_actual: Number(producto.stock_actual ?? 0),
+        categorias: producto.categorias,
+      }));
+      const combos = ((combosData ?? []) as any[]).map((combo) => ({
+        clave: `combo:${combo.id}`,
+        id: combo.id,
+        tipo: "combo" as const,
+        nombre: combo.nombre,
+        precio_venta: Number(combo.precio_venta),
+      }));
 
       if (activo) {
         setMesas((mesasData ?? []) as Mesa[]);
-        setProductos((productosData ?? []) as unknown as Producto[]);
+        setItemsVenta([...productos, ...combos]);
         setMensaje(null);
       }
     }
 
     if (perfil) {
       cargarDatos().catch((err) => {
-        if (activo) setMensaje(err instanceof Error ? err.message : "No se pudieron cargar mesas y productos.");
+        if (activo) setMensaje(err instanceof Error ? err.message : "No se pudieron cargar mesas, productos y combos.");
       });
     }
 
@@ -79,17 +108,17 @@ export function MeseroOperativo() {
   }, [perfil]);
 
   const total = useMemo(() => {
-    return productos.reduce((sum, producto) => sum + (cantidades[producto.id] ?? 0) * Number(producto.precio_venta), 0);
-  }, [cantidades, productos]);
+    return itemsVenta.reduce((sum, item) => sum + (cantidades[item.clave] ?? 0) * Number(item.precio_venta), 0);
+  }, [cantidades, itemsVenta]);
 
-  function cambiarCantidad(productoId: string, delta: number) {
+  function cambiarCantidad(clave: string, delta: number) {
     setCantidades((actual) => {
-      const siguiente = Math.max(0, (actual[productoId] ?? 0) + delta);
-      return { ...actual, [productoId]: siguiente };
+      const siguiente = Math.max(0, (actual[clave] ?? 0) + delta);
+      return { ...actual, [clave]: siguiente };
     });
   }
 
-  async function enviarPayload(payload: { mesaId: string; items: { producto_id: string; cantidad: number }[]; notas: string }) {
+  async function enviarPayload(payload: { mesaId: string; items: PedidoItemPayload[]; notas: string }) {
     const supabase = supabaseBrowser();
     const { error: rpcError } = await supabase.rpc("crear_pedido_rapido", {
       p_mesa_id: payload.mesaId || null,
@@ -99,7 +128,7 @@ export function MeseroOperativo() {
     if (rpcError) throw new Error(rpcError.message);
   }
 
-  function guardarComoPendiente(payload: { mesaId: string; items: { producto_id: string; cantidad: number }[]; notas: string }) {
+  function guardarComoPendiente(payload: { mesaId: string; items: PedidoItemPayload[]; notas: string }) {
     const nuevo: PedidoPendiente = { id: crypto.randomUUID(), ...payload, creado: new Date().toISOString() };
     const siguientes = [nuevo, ...leerPendientes()];
     guardarPendientes(siguientes);
@@ -113,10 +142,15 @@ export function MeseroOperativo() {
 
     const items = Object.entries(cantidades)
       .filter(([, cantidad]) => cantidad > 0)
-      .map(([producto_id, cantidad]) => ({ producto_id, cantidad }));
+      .map(([clave, cantidad]) => {
+        const item = itemsVenta.find((actual) => actual.clave === clave);
+        if (!item) return null;
+        return item.tipo === "combo" ? { combo_id: item.id, cantidad } : { producto_id: item.id, cantidad };
+      })
+      .filter(Boolean) as PedidoItemPayload[];
 
     try {
-      if (items.length === 0) throw new Error("Agrega al menos un producto.");
+      if (items.length === 0) throw new Error("Agrega al menos un producto o combo.");
       const payload = { mesaId, items, notas };
       await enviarPayload(payload);
       setMensaje("Pedido enviado a caja y barra.");
@@ -209,17 +243,18 @@ export function MeseroOperativo() {
           </aside>
 
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {productos.map((producto) => {
-              const cantidad = cantidades[producto.id] ?? 0;
+            {itemsVenta.map((item) => {
+              const cantidad = cantidades[item.clave] ?? 0;
               return (
-                <article key={producto.id} className="rounded-lg border border-antiguo/15 bg-espresso p-4 shadow-suave">
-                  <p className="text-xs font-bold uppercase tracking-wide text-oro">{nombreCategoria(producto)}</p>
-                  <h2 className="mt-2 text-lg font-black text-crema">{producto.nombre}</h2>
-                  <p className="mt-1 text-sm text-antiguo/70">{formatoCOP(producto.precio_venta)}</p>
+                <article key={item.clave} className="rounded-lg border border-antiguo/15 bg-espresso p-4 shadow-suave">
+                  <p className="text-xs font-bold uppercase tracking-wide text-oro">{nombreCategoria(item)}</p>
+                  <h2 className="mt-2 text-lg font-black text-crema">{item.nombre}</h2>
+                  <p className="mt-1 text-sm text-antiguo/70">{formatoCOP(item.precio_venta)}</p>
+                  {item.tipo === "producto" ? <p className="mt-1 text-xs text-antiguo/50">Stock: {item.stock_actual ?? 0}</p> : null}
                   <div className="mt-4 grid grid-cols-[44px_1fr_44px] items-center gap-2">
-                    <button type="button" onClick={() => cambiarCantidad(producto.id, -1)} className="tap-target rounded-md border border-antiguo/20 bg-carbon text-xl">-</button>
+                    <button type="button" onClick={() => cambiarCantidad(item.clave, -1)} className="tap-target rounded-md border border-antiguo/20 bg-carbon text-xl">-</button>
                     <p className="text-center text-2xl font-black text-dorado">{cantidad}</p>
-                    <button type="button" onClick={() => cambiarCantidad(producto.id, 1)} className="tap-target rounded-md border border-antiguo/20 bg-carbon text-xl">+</button>
+                    <button type="button" onClick={() => cambiarCantidad(item.clave, 1)} className="tap-target rounded-md border border-antiguo/20 bg-carbon text-xl">+</button>
                   </div>
                 </article>
               );

@@ -264,7 +264,7 @@ export function CajaOperativa() {
                       <ul className="mt-3 space-y-2 text-sm">
                         {(pedido.pedido_items ?? []).map((item: any) => (
                           <li key={item.id} className="flex justify-between gap-3 border-t border-antiguo/10 pt-2">
-                            <span>{item.cantidad} x {item.productos?.nombre}</span>
+                            <span>{item.cantidad} x {item.productos?.nombre ?? item.combos?.nombre}</span>
                             <span>{formatoCOP(Number(item.cantidad) * Number(item.precio_unitario_capturado))}</span>
                           </li>
                         ))}
