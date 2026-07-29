@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { InventarioAdminPanel } from "@/components/admin/inventario-admin";
+import { MetricasAdminPanel } from "@/components/admin/metricas-admin";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Perfil } from "@/lib/roles";
@@ -163,6 +164,8 @@ export function MeserosAdmin() {
             </Link>
           ))}
         </div>
+
+        <MetricasAdminPanel />
 
         <InventarioAdminPanel />
 
