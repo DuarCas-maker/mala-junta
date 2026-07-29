@@ -28,7 +28,7 @@ function categoriaProducto(producto: Producto) {
   return categoria?.nombre ?? "Sin categoria";
 }
 
-export function InventarioAdminPanel() {
+export function InventarioAdminPanel({ vista = "todo" }: { vista?: "catalogo" | "auditoria" | "todo" }) {
   const [productos, setProductos] = useState<Producto[]>([]);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [proveedores, setProveedores] = useState<Proveedor[]>([]);
@@ -112,6 +112,8 @@ export function InventarioAdminPanel() {
   }, [cargar]);
 
   const auditoriaActiva = useMemo(() => auditorias.find((auditoria) => auditoria.estado === "en_curso"), [auditorias]);
+  const mostrarCatalogo = vista === "todo" || vista === "catalogo";
+  const mostrarAuditoria = vista === "todo" || vista === "auditoria";
 
   async function ejecutar(accion: () => any, exito: string) {
     setGuardando(true);
@@ -243,13 +245,15 @@ export function InventarioAdminPanel() {
       <div className="flex flex-col gap-2 border-b border-antiguo/15 pb-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-sm font-bold uppercase tracking-wide text-oro">F3 Inventario</p>
-          <h2 className="text-2xl font-black text-crema">Catalogo, compras y auditoria</h2>
+          <h2 className="text-2xl font-black text-crema">{vista === "auditoria" ? "Auditoria de inventario" : "Catalogo, compras y stock"}</h2>
         </div>
         <button onClick={cargar} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-4 font-bold">Refrescar</button>
       </div>
 
       {mensaje ? <p className="rounded-md border border-antiguo/15 bg-espresso p-3 text-sm font-semibold">{mensaje}</p> : null}
 
+      {mostrarCatalogo ? (
+        <>
       <div className="grid gap-4 lg:grid-cols-3">
         <section className="rounded-lg border border-antiguo/15 bg-espresso p-4 shadow-suave">
           <h3 className="text-lg font-black text-crema">Producto</h3>
@@ -397,7 +401,10 @@ export function InventarioAdminPanel() {
           </div>
         </section>
       </div>
+        </>
+      ) : null}
 
+      {mostrarAuditoria ? (
       <section className="rounded-lg border border-antiguo/15 bg-espresso p-4 shadow-suave">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -415,9 +422,13 @@ export function InventarioAdminPanel() {
                 <input value={conteos[item.producto_id] ?? item.contado ?? ""} onChange={(event) => setConteos((actual) => ({ ...actual, [item.producto_id]: event.target.value }))} type="number" min="0" placeholder="Contado" className="tap-target rounded-md border border-antiguo/20 bg-espresso px-3 text-crema" />
               </label>
             ))}
-            <div className="grid gap-2 sm:grid-cols-2">
+            <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+              <select value={ajusteMotivo} onChange={(event) => setAjusteMotivo(event.target.value)} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
+                <option value="">Motivo de ajuste</option>
+                {motivos.map((motivo) => <option key={motivo.id} value={motivo.id}>{motivo.texto}</option>)}
+              </select>
               <button disabled={guardando} className="tap-target rounded-md border border-oro/30 px-4 font-bold text-dorado disabled:opacity-50">Guardar conteos</button>
-              <button type="button" onClick={cerrarAuditoria} disabled={guardando || !ajusteMotivo} className="tap-target rounded-md bg-oro px-4 font-black text-carbon disabled:opacity-50">Cerrar auditoria con motivo seleccionado</button>
+              <button type="button" onClick={cerrarAuditoria} disabled={guardando || motivos.length === 0} className="tap-target rounded-md bg-oro px-4 font-black text-carbon disabled:opacity-50">Cerrar auditoria</button>
             </div>
           </form>
         ) : (
@@ -431,6 +442,7 @@ export function InventarioAdminPanel() {
           </div>
         )}
       </section>
+      ) : null}
     </section>
   );
 }
