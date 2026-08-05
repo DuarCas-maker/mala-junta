@@ -23,7 +23,7 @@ select lives_ok(
     jsonb_build_array(jsonb_build_object('producto_id', (select id from public.productos where activo = true order by nombre limit 1), 'cantidad', 1)),
     current_setting('app.f1_test_tag') || ':anulacion'
   ) $$,
-  'Mesero puede crear pedido de barra por RPC'
+  'Mesero puede crear pedido directo por RPC'
 );
 
 select throws_ok(

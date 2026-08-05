@@ -394,7 +394,7 @@ export function InventarioAdminPanel({ vista = "todo" }: { vista?: "catalogo" | 
           <div className="mt-4 space-y-2 border-t border-antiguo/10 pt-4">
             {combos.map((combo) => (
               <div key={combo.id} className="rounded-md border border-antiguo/10 bg-carbon p-3 text-sm">
-                <p className="font-bold text-crema">{combo.nombre} Â· {formatoCOP(combo.precio_venta)}</p>
+                <p className="font-bold text-crema">{combo.nombre} - {formatoCOP(combo.precio_venta)}</p>
                 <p className="text-antiguo/70">{(combo.combo_items ?? []).filter((item) => item.activo).map((item) => `${item.cantidad} x ${item.productos?.nombre}`).join(", ")}</p>
               </div>
             ))}
@@ -418,7 +418,7 @@ export function InventarioAdminPanel({ vista = "todo" }: { vista?: "catalogo" | 
           <form onSubmit={guardarConteos} className="mt-4 grid gap-3">
             {(auditoriaActiva.auditoria_items ?? []).map((item) => (
               <label key={item.id} className="grid gap-2 rounded-md border border-antiguo/10 bg-carbon p-3 text-sm sm:grid-cols-[1fr_120px] sm:items-center">
-                <span><strong className="text-crema">{item.productos?.nombre}</strong> Â· teorico {item.teorico} Â· diferencia {item.diferencia ?? "-"}</span>
+                <span><strong className="text-crema">{item.productos?.nombre}</strong> - teorico {item.teorico} - diferencia {item.diferencia ?? "-"}</span>
                 <input value={conteos[item.producto_id] ?? item.contado ?? ""} onChange={(event) => setConteos((actual) => ({ ...actual, [item.producto_id]: event.target.value }))} type="number" min="0" placeholder="Contado" className="tap-target rounded-md border border-antiguo/20 bg-espresso px-3 text-crema" />
               </label>
             ))}
@@ -436,7 +436,7 @@ export function InventarioAdminPanel({ vista = "todo" }: { vista?: "catalogo" | 
             {candidatos.slice(0, 8).map((item) => (
               <div key={item.id} className="rounded-md border border-antiguo/10 bg-carbon p-3 text-sm">
                 <p className="font-bold text-crema">{item.nombre}</p>
-                <p className="text-antiguo/70">Stock {item.stock_actual} Â· valor {formatoCOP(item.valor_inventario)}</p>
+                <p className="text-antiguo/70">Stock {item.stock_actual} - valor {formatoCOP(item.valor_inventario)}</p>
               </div>
             ))}
           </div>

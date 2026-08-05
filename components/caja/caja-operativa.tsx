@@ -1,7 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { CatalogoStockAdminPanel } from "@/components/admin/catalogo-stock-admin";
+import { CapturasVentaPanel } from "@/components/caja/capturas-venta-panel";
 import { CierreCajaPanel } from "@/components/caja/cierre-caja-panel";
+import { PedidoRapidoPanel } from "@/components/pedidos/pedido-rapido-panel";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { estadoPedidoTexto, formatoCOP } from "@/lib/format";
 import { supabaseBrowser } from "@/lib/supabase-browser";
@@ -11,6 +14,7 @@ type MedioPago = "efectivo" | "datafono" | "nequi_daviplata" | "transferencia";
 type Motivo = { id: string; texto: string };
 type Cuenta = any;
 type PedidoHistorial = any;
+type ModuloCaja = "cobros" | "pedidos" | "inventario";
 
 const mediosPago: { id: MedioPago; nombre: string }[] = [
   { id: "efectivo", nombre: "Efectivo" },
@@ -25,7 +29,7 @@ function totalPagado(cuenta: Cuenta) {
 
 function nombreMesa(cuenta: Cuenta) {
   const mesa = Array.isArray(cuenta.mesas) ? cuenta.mesas[0] : cuenta.mesas;
-  return mesa ? `${mesa.nombre} - ${mesa.zona}` : "Barra";
+  return mesa ? `${mesa.nombre} - ${mesa.zona}` : "Pedido directo";
 }
 
 function meseroPedido(pedido: any) {
@@ -44,7 +48,7 @@ function totalPedido(pedido: PedidoHistorial) {
 function cuentaPedido(pedido: PedidoHistorial) {
   const cuenta = Array.isArray(pedido.cuentas) ? pedido.cuentas[0] : pedido.cuentas;
   const mesa = Array.isArray(cuenta?.mesas) ? cuenta.mesas[0] : cuenta?.mesas;
-  return mesa ? `${mesa.nombre} - ${mesa.zona}` : "Barra";
+  return mesa ? `${mesa.nombre} - ${mesa.zona}` : "Pedido directo";
 }
 
 function fechaPedido(fecha?: string) {
@@ -54,6 +58,7 @@ function fechaPedido(fecha?: string) {
 
 export function CajaOperativa() {
   const { perfil, cargando, error, salir } = usePerfilProtegido(["caja", "admin"]);
+  const [moduloActivo, setModuloActivo] = useState<ModuloCaja>("cobros");
   const [cuentas, setCuentas] = useState<Cuenta[]>([]);
   const [historial, setHistorial] = useState<PedidoHistorial[]>([]);
   const [motivos, setMotivos] = useState<Motivo[]>([]);
@@ -250,11 +255,20 @@ export function CajaOperativa() {
 
   return (
     <main className="min-h-screen px-3 py-4 text-champana sm:px-6 sm:py-5 lg:px-8">
-      <section className="mx-auto flex max-w-7xl flex-col gap-5">
+      <div className="mx-auto grid max-w-[1500px] gap-5 lg:grid-cols-[240px_minmax(0,1fr)]">
+        <aside className="rounded-lg border border-antiguo/15 bg-cafe/95 p-3 shadow-suave lg:sticky lg:top-5 lg:h-[calc(100vh-2.5rem)]">
+          <p className="text-xs font-black uppercase tracking-wide text-oro">Caja</p>
+          <nav className="mt-3 grid gap-2" aria-label="Modulos de caja">
+            <button type="button" onClick={() => setModuloActivo("cobros")} className={moduloActivo === "cobros" ? "tap-target rounded-md bg-oro px-3 py-2 text-left font-black text-carbon" : "tap-target rounded-md border border-antiguo/20 bg-carbon px-3 py-2 text-left font-bold text-crema"}>Cobros</button>
+            <button type="button" onClick={() => setModuloActivo("pedidos")} className={moduloActivo === "pedidos" ? "tap-target rounded-md bg-oro px-3 py-2 text-left font-black text-carbon" : "tap-target rounded-md border border-antiguo/20 bg-carbon px-3 py-2 text-left font-bold text-crema"}>Pedidos</button>
+            <button type="button" onClick={() => setModuloActivo("inventario")} className={moduloActivo === "inventario" ? "tap-target rounded-md bg-oro px-3 py-2 text-left font-black text-carbon" : "tap-target rounded-md border border-antiguo/20 bg-carbon px-3 py-2 text-left font-bold text-crema"}>Inventario</button>
+          </nav>
+        </aside>
+        <section className="flex min-w-0 flex-col gap-5">
         <header className="flex flex-col gap-3 border-b border-antiguo/15 pb-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-sm font-bold uppercase tracking-wide text-oro">Centro de Mando</p>
-            <h1 className="text-2xl font-black text-crema sm:text-3xl">Cuentas y cobros</h1>
+            <h1 className="text-2xl font-black text-crema sm:text-3xl">{moduloActivo === "inventario" ? "Inventario" : moduloActivo === "pedidos" ? "Pedidos" : "Cuentas y cobros"}</h1>
             <p className="text-sm text-antiguo/70">{perfil?.nombre}</p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -264,7 +278,21 @@ export function CajaOperativa() {
           </div>
         </header>
 
-        <CierreCajaPanel perfil={perfil!} onResumenChange={manejarResumenCaja} />
+        {moduloActivo === "inventario" ? (
+          <CatalogoStockAdminPanel />
+        ) : moduloActivo === "pedidos" ? (
+          <PedidoRapidoPanel
+            perfil={perfil!}
+            etiqueta="Caja"
+            titulo="Nuevo pedido"
+            className="flex flex-col gap-5"
+            onPedidoEnviado={cargar}
+          />
+        ) : (
+          <>
+            <CierreCajaPanel perfil={perfil!} onResumenChange={manejarResumenCaja} />
+
+        <CapturasVentaPanel />
 
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div className="rounded-lg border border-antiguo/15 bg-espresso p-4">
@@ -470,7 +498,10 @@ export function CajaOperativa() {
         </div>
 
         {cuentas.length === 0 ? <p className="rounded-md border border-antiguo/15 bg-espresso p-6 text-center text-antiguo/70">No hay cuentas activas.</p> : null}
+          </>
+        )}
       </section>
+      </div>
     </main>
   );
 }

@@ -16,7 +16,7 @@ select throws_ok(
   $$ update public.parametros set valor = '11'::jsonb where clave = 'propina_sugerida_pct' $$,
   '42501',
   null,
-  'Mesero no puede modificar parÃ¡metros'
+  'Mesero no puede modificar parametros'
 );
 
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000002', true);

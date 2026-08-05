@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { formatoCOP } from "@/lib/format";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 
@@ -50,11 +50,12 @@ type ItemStock = {
 
 type ProductoForm = { id: string | null; nombre: string; categoriaId: string; precio: string; costo: string; codigo: string; minimo: string; presentacion: string; factor: string; activo: boolean };
 type StockInlineForm = { stock: string; minimo: string };
-type ComboForm = { id: string | null; nombre: string; precio: string; producto1: string; cantidad1: string; producto2: string; cantidad2: string; activo: boolean };
+type ComboFormItem = { producto_id: string; cantidad: string };
+type ComboForm = { id: string | null; nombre: string; precio: string; items: ComboFormItem[]; activo: boolean };
 type ProveedorForm = { id: string | null; nombre: string; nit: string; contacto: string; telefono: string; correo: string; direccion: string; observacion: string; activo: boolean };
 
 const productoInicial: ProductoForm = { id: null, nombre: "", categoriaId: "", precio: "", costo: "", codigo: "", minimo: "0", presentacion: "unidad", factor: "1", activo: true };
-const comboInicial: ComboForm = { id: null, nombre: "", precio: "", producto1: "", cantidad1: "1", producto2: "", cantidad2: "1", activo: true };
+const comboInicial: ComboForm = { id: null, nombre: "", precio: "", items: [{ producto_id: "", cantidad: "1" }], activo: true };
 const proveedorInicial: ProveedorForm = { id: null, nombre: "", nit: "", contacto: "", telefono: "", correo: "", direccion: "", observacion: "", activo: true };
 
 function comboItems(combo: Combo) {
@@ -62,6 +63,16 @@ function comboItems(combo: Combo) {
     .filter((item) => item.activo !== false)
     .map((item) => ({ producto_id: item.producto_id, cantidad: Number(item.cantidad) }))
     .filter((item) => item.producto_id && item.cantidad > 0);
+}
+
+function comboFormItemsValidos(form: ComboForm) {
+  return form.items
+    .map((item) => ({ producto_id: item.producto_id, cantidad: Number(item.cantidad) }))
+    .filter((item) => item.producto_id && Number.isInteger(item.cantidad) && item.cantidad > 0);
+}
+
+function normalizarTexto(valor: string) {
+  return valor.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 }
 
 function proveedorAForm(proveedor: Proveedor): ProveedorForm {
@@ -102,6 +113,8 @@ export function CatalogoStockAdminPanel() {
   const [ajusteMotivo, setAjusteMotivo] = useState("");
   const [stockEditando, setStockEditando] = useState<string | null>(null);
   const [stockInline, setStockInline] = useState<Record<string, StockInlineForm>>({});
+  const [categoriaFiltroStock, setCategoriaFiltroStock] = useState("");
+  const [busquedaStock, setBusquedaStock] = useState("");
   const cargar = useCallback(async () => {
     const supabase = supabaseBrowser();
     const [productosRes, categoriasRes, proveedoresRes, motivosRes, combosRes, itemsStockRes] = await Promise.all([
@@ -133,6 +146,19 @@ export function CatalogoStockAdminPanel() {
 
   const productosActivos = productos.filter((producto) => producto.activo);
   const proveedoresActivos = proveedores.filter((proveedor) => proveedor.activo);
+  const categoriasItemsStock = useMemo(() => {
+    return Array.from(new Set(itemsStock.map((item) => item.categoria ?? "Sin categoria"))).sort((a, b) => a.localeCompare(b, "es"));
+  }, [itemsStock]);
+  const itemsStockFiltrados = useMemo(() => {
+    const termino = normalizarTexto(busquedaStock.trim());
+
+    return itemsStock.filter((item) => {
+      const categoria = item.categoria ?? "Sin categoria";
+      const coincideCategoria = !categoriaFiltroStock || categoria === categoriaFiltroStock;
+      const coincideBusqueda = !termino || normalizarTexto(item.nombre).includes(termino);
+      return coincideCategoria && coincideBusqueda;
+    });
+  }, [busquedaStock, categoriaFiltroStock, itemsStock]);
 
   async function ejecutar(accion: () => any, exito: string) {
     setGuardando(true);
@@ -214,10 +240,13 @@ export function CatalogoStockAdminPanel() {
   }
   async function guardarCombo(event?: FormEvent<HTMLFormElement>, form = comboForm) {
     event?.preventDefault();
-    const items = [
-      form.producto1 ? { producto_id: form.producto1, cantidad: Number(form.cantidad1) } : null,
-      form.producto2 ? { producto_id: form.producto2, cantidad: Number(form.cantidad2) } : null,
-    ].filter(Boolean);
+    const items = comboFormItemsValidos(form);
+
+    if (items.length === 0) {
+      setMensaje("Agrega al menos un item valido al combo.");
+      return;
+    }
+
     const supabase = supabaseBrowser();
     await ejecutar(
       () => supabase.rpc("crear_combo_catalogo", {
@@ -238,10 +267,9 @@ export function CatalogoStockAdminPanel() {
       id: combo.id,
       nombre: combo.nombre,
       precio: String(combo.precio_venta),
-      producto1: items[0]?.producto_id ?? "",
-      cantidad1: String(items[0]?.cantidad ?? 1),
-      producto2: items[1]?.producto_id ?? "",
-      cantidad2: String(items[1]?.cantidad ?? 1),
+      items: items.length > 0
+        ? items.map((item) => ({ producto_id: item.producto_id, cantidad: String(item.cantidad) }))
+        : [{ producto_id: "", cantidad: "1" }],
       activo: combo.activo,
     });
   }
@@ -252,14 +280,33 @@ export function CatalogoStockAdminPanel() {
       id: combo.id,
       nombre: combo.nombre,
       precio: String(combo.precio_venta),
-      producto1: items[0]?.producto_id ?? "",
-      cantidad1: String(items[0]?.cantidad ?? 1),
-      producto2: items[1]?.producto_id ?? "",
-      cantidad2: String(items[1]?.cantidad ?? 1),
+      items: items.length > 0
+        ? items.map((item) => ({ producto_id: item.producto_id, cantidad: String(item.cantidad) }))
+        : [{ producto_id: "", cantidad: "1" }],
       activo,
     });
   }
 
+  function agregarItemCombo() {
+    setComboForm((actual) => ({
+      ...actual,
+      items: [...actual.items, { producto_id: "", cantidad: "1" }],
+    }));
+  }
+
+  function actualizarItemCombo(index: number, valores: Partial<ComboFormItem>) {
+    setComboForm((actual) => ({
+      ...actual,
+      items: actual.items.map((item, itemIndex) => itemIndex === index ? { ...item, ...valores } : item),
+    }));
+  }
+
+  function quitarItemCombo(index: number) {
+    setComboForm((actual) => {
+      const items = actual.items.filter((_, itemIndex) => itemIndex !== index);
+      return { ...actual, items: items.length > 0 ? items : [{ producto_id: "", cantidad: "1" }] };
+    });
+  }
   async function guardarProveedor(event?: FormEvent<HTMLFormElement>, form = proveedorForm) {
     event?.preventDefault();
     const supabase = supabaseBrowser();
@@ -422,23 +469,22 @@ export function CatalogoStockAdminPanel() {
           <form onSubmit={(event) => guardarCombo(event)} className="mt-3 grid gap-2">
             <input value={comboForm.nombre} onChange={(event) => setComboForm((actual) => ({ ...actual, nombre: event.target.value }))} placeholder="Nombre combo" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
             <input value={comboForm.precio} onChange={(event) => setComboForm((actual) => ({ ...actual, precio: event.target.value }))} type="number" placeholder="Precio combo" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
-            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_84px]">
-              <select value={comboForm.producto1} onChange={(event) => setComboForm((actual) => ({ ...actual, producto1: event.target.value }))} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
-                <option value="">Producto 1</option>
-                {productosActivos.map((producto) => <option key={producto.id} value={producto.id}>{producto.nombre}</option>)}
-              </select>
-              <input value={comboForm.cantidad1} onChange={(event) => setComboForm((actual) => ({ ...actual, cantidad1: event.target.value }))} type="number" min="1" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
-            </div>
-            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_84px]">
-              <select value={comboForm.producto2} onChange={(event) => setComboForm((actual) => ({ ...actual, producto2: event.target.value }))} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
-                <option value="">Producto 2 opcional</option>
-                {productosActivos.map((producto) => <option key={producto.id} value={producto.id}>{producto.nombre}</option>)}
-              </select>
-              <input value={comboForm.cantidad2} onChange={(event) => setComboForm((actual) => ({ ...actual, cantidad2: event.target.value }))} type="number" min="1" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
+            <div className="grid gap-2">
+              {comboForm.items.map((item, index) => (
+                <div key={index} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_84px_auto]">
+                  <select value={item.producto_id} onChange={(event) => actualizarItemCombo(index, { producto_id: event.target.value })} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
+                    <option value="">Item {index + 1}</option>
+                    {productosActivos.map((producto) => <option key={producto.id} value={producto.id}>{producto.nombre}</option>)}
+                  </select>
+                  <input value={item.cantidad} onChange={(event) => actualizarItemCombo(index, { cantidad: event.target.value })} type="number" min="1" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
+                  <button type="button" onClick={() => quitarItemCombo(index)} disabled={comboForm.items.length === 1} className="tap-target rounded-md border border-red-300/30 px-3 text-xs font-bold text-red-100 disabled:opacity-40">Quitar</button>
+                </div>
+              ))}
+              <button type="button" onClick={agregarItemCombo} className="tap-target rounded-md border border-antiguo/20 px-3 font-bold text-crema">Agregar item</button>
             </div>
             <label className="flex items-center gap-2 text-sm text-antiguo/80"><input checked={comboForm.activo} onChange={(event) => setComboForm((actual) => ({ ...actual, activo: event.target.checked }))} type="checkbox" />Activo</label>
             <div className="grid gap-2 sm:grid-cols-2">
-              <button disabled={guardando || !comboForm.nombre || !comboForm.producto1} className="tap-target rounded-md border border-oro/30 px-4 font-bold text-dorado disabled:opacity-50">{comboForm.id ? "Actualizar combo" : "Guardar combo"}</button>
+              <button disabled={guardando || !comboForm.nombre || comboFormItemsValidos(comboForm).length === 0} className="tap-target rounded-md border border-oro/30 px-4 font-bold text-dorado disabled:opacity-50">{comboForm.id ? "Actualizar combo" : "Guardar combo"}</button>
               {comboForm.id ? <button type="button" onClick={() => setComboForm(comboInicial)} className="tap-target rounded-md border border-antiguo/20 px-4 font-bold">Cancelar</button> : null}
             </div>
           </form>
@@ -458,7 +504,16 @@ export function CatalogoStockAdminPanel() {
         </section>
       </div>
       <section className="rounded-lg border border-antiguo/15 bg-espresso p-4 shadow-suave">
-        <h3 className="text-lg font-black text-crema">Items y stock</h3>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <h3 className="text-lg font-black text-crema">Items y stock</h3>
+          <div className="grid gap-2 sm:grid-cols-[220px_280px]">
+            <select value={categoriaFiltroStock} onChange={(event) => setCategoriaFiltroStock(event.target.value)} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
+              <option value="">Todas las categorias</option>
+              {categoriasItemsStock.map((categoria) => <option key={categoria} value={categoria}>{categoria}</option>)}
+            </select>
+            <input value={busquedaStock} onChange={(event) => setBusquedaStock(event.target.value)} placeholder="Buscar item" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema placeholder:text-antiguo/50" />
+          </div>
+        </div>
         <div className="mt-3 overflow-x-auto">
           <table className="w-full min-w-[1080px] text-left text-sm">
             <thead className="text-antiguo/70">
@@ -476,7 +531,7 @@ export function CatalogoStockAdminPanel() {
               </tr>
             </thead>
             <tbody>
-              {itemsStock.map((item) => {
+              {itemsStockFiltrados.map((item) => {
                 const producto = item.tipo_item === "producto" ? productos.find((productoItem) => productoItem.id === item.item_id) : null;
                 const combo = item.tipo_item === "combo" ? combos.find((comboItem) => comboItem.id === item.item_id) : null;
                 const editandoStock = Boolean(producto && stockEditando === item.item_id);
@@ -534,6 +589,7 @@ export function CatalogoStockAdminPanel() {
               })}
             </tbody>
           </table>
+          {itemsStockFiltrados.length === 0 ? <p className="p-4 text-center text-sm text-antiguo/70">No hay items para ese filtro.</p> : null}
         </div>
       </section>
 

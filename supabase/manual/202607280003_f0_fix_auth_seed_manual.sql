@@ -3,7 +3,7 @@
 
 create extension if not exists pgcrypto;
 
--- 1) Asegura/actualiza usuarios Auth con contraseÃ±as conocidas.
+-- 1) Asegura/actualiza usuarios Auth con contrasenas conocidas.
 insert into auth.users (
   id,
   instance_id,
@@ -36,7 +36,7 @@ on conflict (id) do update set
   is_super_admin = false;
 
 -- 2) Asegura identidades email. La columna id en GoTrue puede variar de tipo entre versiones;
--- usamos texto casteado dinÃ¡micamente para que funcione en self-hosted reciente.
+-- usamos texto casteado dinamicamente para que funcione en self-hosted reciente.
 do $$
 declare
   v_id_type text;
