@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { formatoCOP } from "@/lib/format";
+import { estadoPedidoTexto, formatoCOP } from "@/lib/format";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { usePerfilProtegido } from "@/lib/use-perfil-protegido";
 
@@ -19,6 +19,7 @@ type ItemVenta = {
 type Cantidades = Record<string, number>;
 type PedidoItemPayload = { producto_id?: string; combo_id?: string; cantidad: number };
 type PedidoPendiente = { id: string; mesaId: string; items: PedidoItemPayload[]; notas: string; creado: string };
+type PedidoHistorial = any;
 
 const STORAGE_KEY = "mala-junta-pedidos-pendientes";
 
@@ -41,6 +42,21 @@ function guardarPendientes(pedidos: PedidoPendiente[]) {
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(pedidos));
 }
 
+function totalPedido(pedido: PedidoHistorial) {
+  return (pedido.pedido_items ?? []).reduce((sum: number, item: any) => sum + Number(item.cantidad ?? 0) * Number(item.precio_unitario_capturado ?? 0), 0);
+}
+
+function nombreCuentaPedido(pedido: PedidoHistorial) {
+  const cuenta = Array.isArray(pedido.cuentas) ? pedido.cuentas[0] : pedido.cuentas;
+  const mesa = Array.isArray(cuenta?.mesas) ? cuenta.mesas[0] : cuenta?.mesas;
+  return mesa ? `${mesa.nombre} - ${mesa.zona}` : "Barra";
+}
+
+function fechaPedido(fecha?: string) {
+  if (!fecha) return "-";
+  return new Date(fecha).toLocaleString("es-CO", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
 export function MeseroOperativo() {
   const { perfil, cargando, error, salir } = usePerfilProtegido(["mesero", "admin"]);
   const [mesas, setMesas] = useState<Mesa[]>([]);
@@ -51,6 +67,7 @@ export function MeseroOperativo() {
   const [mensaje, setMensaje] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
   const [pendientes, setPendientes] = useState<PedidoPendiente[]>([]);
+  const [historial, setHistorial] = useState<PedidoHistorial[]>([]);
 
   useEffect(() => {
     setPendientes(leerPendientes());
@@ -62,15 +79,21 @@ export function MeseroOperativo() {
     async function cargarDatos() {
       setMensaje("Cargando mesas, productos y combos...");
       const supabase = supabaseBrowser();
-      const [{ data: mesasData, error: mesasError }, { data: productosData, error: productosError }, { data: combosData, error: combosError }] = await Promise.all([
+      const [{ data: mesasData, error: mesasError }, { data: productosData, error: productosError }, { data: combosData, error: combosError }, { data: historialData, error: historialError }] = await Promise.all([
         supabase.from("mesas").select("id,nombre,zona,es_vip").eq("activa", true).order("nombre"),
         supabase.from("productos").select("id,nombre,precio_venta,stock_actual,categorias(nombre)").eq("activo", true).order("nombre"),
         supabase.from("combos").select("id,nombre,precio_venta").eq("activo", true).order("nombre"),
+        supabase
+          .from("pedidos")
+          .select("id,estado,enviado_at,notas,cuentas(estado,total_cuenta,mesas(nombre,zona)),pedido_items(id,cantidad,precio_unitario_capturado,productos(nombre),combos(nombre))")
+          .order("enviado_at", { ascending: false })
+          .limit(12),
       ]);
 
       if (mesasError) throw mesasError;
       if (productosError) throw productosError;
       if (combosError) throw combosError;
+      if (historialError) throw historialError;
 
       const productos = ((productosData ?? []) as any[]).map((producto) => ({
         clave: `producto:${producto.id}`,
@@ -92,6 +115,7 @@ export function MeseroOperativo() {
       if (activo) {
         setMesas((mesasData ?? []) as Mesa[]);
         setItemsVenta([...productos, ...combos]);
+        setHistorial((historialData ?? []) as PedidoHistorial[]);
         setMensaje(null);
       }
     }
@@ -116,6 +140,22 @@ export function MeseroOperativo() {
       const siguiente = Math.max(0, (actual[clave] ?? 0) + delta);
       return { ...actual, [clave]: siguiente };
     });
+  }
+
+  async function cargarHistorial() {
+    const supabase = supabaseBrowser();
+    const { data, error: historialError } = await supabase
+      .from("pedidos")
+      .select("id,estado,enviado_at,notas,cuentas(estado,total_cuenta,mesas(nombre,zona)),pedido_items(id,cantidad,precio_unitario_capturado,productos(nombre),combos(nombre))")
+      .order("enviado_at", { ascending: false })
+      .limit(12);
+
+    if (historialError) {
+      setMensaje(historialError.message);
+      return;
+    }
+
+    setHistorial((data ?? []) as PedidoHistorial[]);
   }
 
   async function enviarPayload(payload: { mesaId: string; items: PedidoItemPayload[]; notas: string }) {
@@ -156,6 +196,7 @@ export function MeseroOperativo() {
       setMensaje("Pedido enviado a caja y barra.");
       setCantidades({});
       setNotas("");
+      await cargarHistorial();
     } catch (err) {
       if (items.length > 0) {
         guardarComoPendiente({ mesaId, items, notas });
@@ -179,6 +220,7 @@ export function MeseroOperativo() {
       guardarPendientes(restantes);
       setPendientes(restantes);
       setMensaje("Pedido pendiente sincronizado.");
+      await cargarHistorial();
     } catch (err) {
       setMensaje(err instanceof Error ? err.message : "No se pudo sincronizar el pendiente.");
     } finally {
@@ -190,15 +232,15 @@ export function MeseroOperativo() {
   if (error) return <main className="min-h-screen p-5 text-champana">{error}</main>;
 
   return (
-    <main className="min-h-screen px-4 py-5 text-champana">
+    <main className="min-h-screen px-3 py-4 text-champana sm:px-4 sm:py-5">
       <section className="mx-auto flex max-w-5xl flex-col gap-5">
-        <header className="flex items-center justify-between border-b border-antiguo/15 pb-4">
+        <header className="flex flex-col gap-3 border-b border-antiguo/15 pb-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-sm font-bold uppercase tracking-wide text-oro">Mesero</p>
-            <h1 className="text-3xl font-black text-crema">Nuevo pedido</h1>
+            <h1 className="text-2xl font-black text-crema sm:text-3xl">Nuevo pedido</h1>
             <p className="text-sm text-antiguo/70">{perfil?.nombre}</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             {perfil?.rol === "admin" ? <Link href="/admin" className="tap-target rounded-md border border-antiguo/20 bg-carbon px-4 font-bold">Admin</Link> : null}
             <button onClick={salir} className="tap-target rounded-md border border-antiguo/20 bg-espresso px-4 font-bold">Salir</button>
           </div>
@@ -217,8 +259,8 @@ export function MeseroOperativo() {
           </section>
         ) : null}
 
-        <form onSubmit={enviarPedido} className="grid gap-5 lg:grid-cols-[280px_1fr]">
-          <aside className="rounded-lg border border-antiguo/15 bg-espresso p-4 shadow-suave">
+        <form onSubmit={enviarPedido} className="grid gap-4 lg:grid-cols-[280px_1fr] lg:gap-5">
+          <aside className="rounded-lg border border-antiguo/15 bg-espresso p-3 shadow-suave sm:p-4">
             <label className="block text-sm font-bold text-champana">
               Mesa o zona
               <select value={mesaId} onChange={(event) => setMesaId(event.target.value)} className="tap-target mt-2 w-full rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
@@ -246,7 +288,7 @@ export function MeseroOperativo() {
             {itemsVenta.map((item) => {
               const cantidad = cantidades[item.clave] ?? 0;
               return (
-                <article key={item.clave} className="rounded-lg border border-antiguo/15 bg-espresso p-4 shadow-suave">
+                <article key={item.clave} className="rounded-lg border border-antiguo/15 bg-espresso p-3 shadow-suave sm:p-4">
                   <p className="text-xs font-bold uppercase tracking-wide text-oro">{nombreCategoria(item)}</p>
                   <h2 className="mt-2 text-lg font-black text-crema">{item.nombre}</h2>
                   <p className="mt-1 text-sm text-antiguo/70">{formatoCOP(item.precio_venta)}</p>
@@ -261,6 +303,42 @@ export function MeseroOperativo() {
             })}
           </div>
         </form>
+
+        <section className="rounded-lg border border-antiguo/15 bg-espresso p-3 shadow-suave sm:p-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-bold uppercase tracking-wide text-oro">Historial</p>
+              <h2 className="text-xl font-black text-crema">Pedidos recientes</h2>
+            </div>
+            <button onClick={cargarHistorial} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-4 text-sm font-bold">Actualizar</button>
+          </div>
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            {historial.map((pedido) => (
+              <article key={pedido.id} className="rounded-md border border-antiguo/10 bg-carbon p-3">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="text-sm font-black text-crema">{nombreCuentaPedido(pedido)}</p>
+                    <p className="text-xs text-antiguo/60">{fechaPedido(pedido.enviado_at)}</p>
+                  </div>
+                  <div className="text-left sm:text-right">
+                    <p className="text-xs font-bold uppercase tracking-wide text-oro">{estadoPedidoTexto(pedido.estado)}</p>
+                    <p className="text-sm font-black text-dorado">{formatoCOP(totalPedido(pedido))}</p>
+                  </div>
+                </div>
+                {pedido.notas ? <p className="mt-2 text-sm text-antiguo/75">{pedido.notas}</p> : null}
+                <ul className="mt-3 space-y-2 text-sm">
+                  {(pedido.pedido_items ?? []).map((item: any) => (
+                    <li key={item.id} className="flex flex-wrap justify-between gap-x-3 gap-y-1 border-t border-antiguo/10 pt-2">
+                      <span>{item.cantidad} x {item.productos?.nombre ?? item.combos?.nombre}</span>
+                      <span className="font-bold text-dorado">{formatoCOP(Number(item.cantidad) * Number(item.precio_unitario_capturado))}</span>
+                    </li>
+                  ))}
+                </ul>
+              </article>
+            ))}
+          </div>
+          {historial.length === 0 ? <p className="mt-3 rounded-md border border-antiguo/10 bg-carbon p-4 text-center text-sm text-antiguo/70">Todavia no hay pedidos registrados.</p> : null}
+        </section>
       </section>
     </main>
   );

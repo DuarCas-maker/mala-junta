@@ -70,15 +70,15 @@ export function BarraOperativa() {
   if (error) return <main className="min-h-screen p-5 text-champana">{error}</main>;
 
   return (
-    <main className="min-h-screen px-4 py-5 text-champana sm:px-8">
+    <main className="min-h-screen px-3 py-4 text-champana sm:px-6 sm:py-5 lg:px-8">
       <section className="mx-auto flex max-w-6xl flex-col gap-5">
-        <header className="flex items-center justify-between border-b border-antiguo/15 pb-4">
+        <header className="flex flex-col gap-3 border-b border-antiguo/15 pb-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-sm font-bold uppercase tracking-wide text-oro">Barra</p>
-            <h1 className="text-3xl font-black text-crema">Comandas</h1>
+            <h1 className="text-2xl font-black text-crema sm:text-3xl">Comandas</h1>
             <p className="text-sm text-antiguo/70">{perfil?.nombre}</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             {perfil?.rol === "admin" ? <Link href="/admin" className="tap-target rounded-md border border-antiguo/20 bg-carbon px-4 font-bold">Admin</Link> : null}
             <button onClick={salir} className="tap-target rounded-md border border-antiguo/20 bg-espresso px-4 font-bold">Salir</button>
           </div>
@@ -88,8 +88,8 @@ export function BarraOperativa() {
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {pedidos.map((pedido) => (
-            <article key={pedido.id} className="rounded-lg border border-antiguo/15 bg-espresso p-4 shadow-suave">
-              <div className="flex items-start justify-between gap-3">
+            <article key={pedido.id} className="rounded-lg border border-antiguo/15 bg-espresso p-3 shadow-suave sm:p-4">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <p className="text-sm font-bold text-oro">{nombreMesa(pedido)}</p>
                   <h2 className="text-xl font-black text-crema">{estadoPedidoTexto(pedido.estado)}</h2>

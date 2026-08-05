@@ -10,6 +10,7 @@ import { usePerfilProtegido } from "@/lib/use-perfil-protegido";
 type MedioPago = "efectivo" | "datafono" | "nequi_daviplata" | "transferencia";
 type Motivo = { id: string; texto: string };
 type Cuenta = any;
+type PedidoHistorial = any;
 
 const mediosPago: { id: MedioPago; nombre: string }[] = [
   { id: "efectivo", nombre: "Efectivo" },
@@ -36,9 +37,25 @@ function nombreMedio(medio: string) {
   return mediosPago.find((item) => item.id === medio)?.nombre ?? medio;
 }
 
+function totalPedido(pedido: PedidoHistorial) {
+  return (pedido.pedido_items ?? []).reduce((sum: number, item: any) => sum + Number(item.cantidad ?? 0) * Number(item.precio_unitario_capturado ?? 0), 0);
+}
+
+function cuentaPedido(pedido: PedidoHistorial) {
+  const cuenta = Array.isArray(pedido.cuentas) ? pedido.cuentas[0] : pedido.cuentas;
+  const mesa = Array.isArray(cuenta?.mesas) ? cuenta.mesas[0] : cuenta?.mesas;
+  return mesa ? `${mesa.nombre} - ${mesa.zona}` : "Barra";
+}
+
+function fechaPedido(fecha?: string) {
+  if (!fecha) return "-";
+  return new Date(fecha).toLocaleString("es-CO", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
 export function CajaOperativa() {
   const { perfil, cargando, error, salir } = usePerfilProtegido(["caja", "admin"]);
   const [cuentas, setCuentas] = useState<Cuenta[]>([]);
+  const [historial, setHistorial] = useState<PedidoHistorial[]>([]);
   const [motivos, setMotivos] = useState<Motivo[]>([]);
   const [mensaje, setMensaje] = useState<string | null>(null);
   const [procesando, setProcesando] = useState<string | null>(null);
@@ -61,15 +78,29 @@ export function CajaOperativa() {
 
   const cargar = useCallback(async () => {
     const supabase = supabaseBrowser();
-    const { data, error: queryError } = await supabase.rpc("cuentas_activas_caja");
+    const [cuentasRes, historialRes] = await Promise.all([
+      supabase.rpc("cuentas_activas_caja"),
+      supabase
+        .from("pedidos")
+        .select("id,estado,enviado_at,notas,perfiles(nombre),cuentas(estado,total_cuenta,mesas(nombre,zona)),pedido_items(id,cantidad,precio_unitario_capturado,productos(nombre),combos(nombre))")
+        .order("enviado_at", { ascending: false })
+        .limit(16),
+    ]);
 
-    if (queryError) {
-      setMensaje(`No se pudieron cargar cuentas: ${queryError.message}`);
+    if (cuentasRes.error) {
+      setMensaje(`No se pudieron cargar cuentas: ${cuentasRes.error.message}`);
       setCuentas([]);
       return;
     }
 
-    setCuentas(Array.isArray(data) ? data : []);
+    if (historialRes.error) {
+      setMensaje(`No se pudo cargar historial: ${historialRes.error.message}`);
+      setHistorial([]);
+      return;
+    }
+
+    setCuentas(Array.isArray(cuentasRes.data) ? cuentasRes.data : []);
+    setHistorial((historialRes.data ?? []) as PedidoHistorial[]);
     setActualizadoAt(new Date().toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
   }, []);
 
@@ -218,12 +249,12 @@ export function CajaOperativa() {
   if (error) return <main className="min-h-screen p-5 text-champana">{error}</main>;
 
   return (
-    <main className="min-h-screen px-4 py-5 text-champana sm:px-8">
+    <main className="min-h-screen px-3 py-4 text-champana sm:px-6 sm:py-5 lg:px-8">
       <section className="mx-auto flex max-w-7xl flex-col gap-5">
         <header className="flex flex-col gap-3 border-b border-antiguo/15 pb-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-sm font-bold uppercase tracking-wide text-oro">Centro de Mando</p>
-            <h1 className="text-3xl font-black text-crema">Cuentas y cobros</h1>
+            <h1 className="text-2xl font-black text-crema sm:text-3xl">Cuentas y cobros</h1>
             <p className="text-sm text-antiguo/70">{perfil?.nombre}</p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -235,7 +266,7 @@ export function CajaOperativa() {
 
         <CierreCajaPanel perfil={perfil!} onResumenChange={manejarResumenCaja} />
 
-        <div className="grid gap-3 md:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <div className="rounded-lg border border-antiguo/15 bg-espresso p-4">
             <p className="text-sm text-antiguo/70">Cuentas activas</p>
             <p className="text-2xl font-black text-crema">{cuentas.length}</p>
@@ -253,6 +284,42 @@ export function CajaOperativa() {
         {actualizadoAt ? <p className="text-xs font-bold uppercase tracking-wide text-antiguo/55">Actualizado {actualizadoAt}</p> : null}
         {mensaje ? <p className="rounded-md border border-antiguo/15 bg-espresso p-3 text-sm">{mensaje}</p> : null}
 
+        <section className="rounded-lg border border-antiguo/15 bg-espresso p-3 shadow-suave sm:p-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-bold uppercase tracking-wide text-oro">Historial</p>
+              <h2 className="text-xl font-black text-crema">Pedidos recientes</h2>
+            </div>
+            <button onClick={cargar} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-4 text-sm font-bold">Actualizar</button>
+          </div>
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            {historial.map((pedido) => (
+              <article key={pedido.id} className="rounded-md border border-antiguo/10 bg-carbon p-3">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="text-sm font-black text-crema">{cuentaPedido(pedido)}</p>
+                    <p className="text-xs text-antiguo/60">{fechaPedido(pedido.enviado_at)} - Mesero: {meseroPedido(pedido)}</p>
+                  </div>
+                  <div className="text-left sm:text-right">
+                    <p className="text-xs font-bold uppercase tracking-wide text-oro">{estadoPedidoTexto(pedido.estado)}</p>
+                    <p className="text-sm font-black text-dorado">{formatoCOP(totalPedido(pedido))}</p>
+                  </div>
+                </div>
+                {pedido.notas ? <p className="mt-2 text-sm text-antiguo/75">{pedido.notas}</p> : null}
+                <ul className="mt-3 space-y-2 text-sm">
+                  {(pedido.pedido_items ?? []).map((item: any) => (
+                    <li key={item.id} className="flex flex-wrap justify-between gap-x-3 gap-y-1 border-t border-antiguo/10 pt-2">
+                      <span>{item.cantidad} x {item.productos?.nombre ?? item.combos?.nombre}</span>
+                      <span className="font-bold text-dorado">{formatoCOP(Number(item.cantidad) * Number(item.precio_unitario_capturado))}</span>
+                    </li>
+                  ))}
+                </ul>
+              </article>
+            ))}
+          </div>
+          {historial.length === 0 ? <p className="mt-3 rounded-md border border-antiguo/10 bg-carbon p-4 text-center text-sm text-antiguo/70">Todavia no hay pedidos registrados.</p> : null}
+        </section>
+
         <div className="grid gap-4 xl:grid-cols-2">
           {cuentas.map((cuenta) => {
             const total = Number(cuenta.total_cuenta ?? 0);
@@ -263,7 +330,7 @@ export function CajaOperativa() {
             const bloqueada = procesando === cuenta.id;
 
             return (
-              <article key={cuenta.id} className="rounded-lg border border-antiguo/15 bg-espresso p-4 shadow-suave">
+              <article key={cuenta.id} className="rounded-lg border border-antiguo/15 bg-espresso p-3 shadow-suave sm:p-4">
                 <div className="flex flex-col gap-2 border-b border-antiguo/10 pb-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>
                     <p className="text-sm font-bold text-oro">{nombreMesa(cuenta)}</p>
@@ -294,7 +361,7 @@ export function CajaOperativa() {
 
                       <ul className="mt-3 space-y-2 text-sm">
                         {(pedido.pedido_items ?? []).map((item: any) => (
-                          <li key={item.id} className="flex justify-between gap-3 border-t border-antiguo/10 pt-2">
+                          <li key={item.id} className="flex flex-wrap justify-between gap-x-3 gap-y-1 border-t border-antiguo/10 pt-2">
                             <span>{item.cantidad} x {item.productos?.nombre ?? item.combos?.nombre}</span>
                             <span>{formatoCOP(Number(item.cantidad) * Number(item.precio_unitario_capturado))}</span>
                           </li>
@@ -335,7 +402,7 @@ export function CajaOperativa() {
                     <ul className="mt-2 space-y-1 text-sm text-antiguo/80">
                       {(cuenta.documentos ?? []).map((documento: any) => (
                         <li key={documento.id} className="rounded-md border border-antiguo/10 bg-espresso p-2">
-                          <div className="flex justify-between gap-3"><span>{documento.numero} - {documento.tipo}</span><span>{formatoCOP(documento.total)}</span></div>
+                          <div className="flex flex-wrap justify-between gap-x-3 gap-y-1"><span>{documento.numero} - {documento.tipo}</span><span>{formatoCOP(documento.total)}</span></div>
                           <p className="text-xs text-antiguo/55">{documento.etiqueta_no_fiscal}</p>
                         </li>
                       ))}

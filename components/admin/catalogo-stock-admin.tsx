@@ -49,6 +49,7 @@ type ItemStock = {
 };
 
 type ProductoForm = { id: string | null; nombre: string; categoriaId: string; precio: string; costo: string; codigo: string; minimo: string; presentacion: string; factor: string; activo: boolean };
+type StockInlineForm = { stock: string; minimo: string };
 type ComboForm = { id: string | null; nombre: string; precio: string; producto1: string; cantidad1: string; producto2: string; cantidad2: string; activo: boolean };
 type ProveedorForm = { id: string | null; nombre: string; nit: string; contacto: string; telefono: string; correo: string; direccion: string; observacion: string; activo: boolean };
 
@@ -99,6 +100,8 @@ export function CatalogoStockAdminPanel() {
   const [ajusteProducto, setAjusteProducto] = useState("");
   const [ajusteCantidad, setAjusteCantidad] = useState("");
   const [ajusteMotivo, setAjusteMotivo] = useState("");
+  const [stockEditando, setStockEditando] = useState<string | null>(null);
+  const [stockInline, setStockInline] = useState<Record<string, StockInlineForm>>({});
   const cargar = useCallback(async () => {
     const supabase = supabaseBrowser();
     const [productosRes, categoriasRes, proveedoresRes, motivosRes, combosRes, itemsStockRes] = await Promise.all([
@@ -171,20 +174,6 @@ export function CatalogoStockAdminPanel() {
     setProductoForm(productoInicial);
   }
 
-  function editarProducto(producto: Producto) {
-    setProductoForm({
-      id: producto.id,
-      nombre: producto.nombre,
-      categoriaId: producto.categoria_id ?? "",
-      precio: String(producto.precio_venta),
-      costo: String(producto.costo_unitario_actual),
-      codigo: producto.codigo_interno ?? "",
-      minimo: String(producto.stock_minimo),
-      presentacion: producto.presentacion_compra,
-      factor: String(producto.factor_compra),
-      activo: producto.activo,
-    });
-  }
 
   async function desactivarProducto(producto: Producto) {
     await guardarProducto(undefined, {
@@ -310,6 +299,56 @@ export function CatalogoStockAdminPanel() {
     );
     setAjusteCantidad("");
   }
+
+  function iniciarEdicionStock(producto: Producto) {
+    setStockEditando(producto.id);
+    setStockInline((actual) => ({
+      ...actual,
+      [producto.id]: {
+        stock: String(producto.stock_actual),
+        minimo: String(producto.stock_minimo),
+      },
+    }));
+  }
+
+  function cancelarEdicionStock(productoId: string) {
+    setStockEditando(null);
+    setStockInline((actual) => {
+      const siguiente = { ...actual };
+      delete siguiente[productoId];
+      return siguiente;
+    });
+  }
+
+  async function guardarStockInline(producto: Producto) {
+    const valores = stockInline[producto.id];
+    const stock = Number(valores?.stock ?? producto.stock_actual);
+    const minimo = Number(valores?.minimo ?? producto.stock_minimo);
+
+    if (!Number.isInteger(stock) || !Number.isInteger(minimo) || stock < 0 || minimo < 0) {
+      setMensaje("Stock y minimo deben ser numeros enteros mayores o iguales a cero.");
+      return;
+    }
+
+    setGuardando(true);
+    setMensaje(null);
+    const supabase = supabaseBrowser();
+    const { error } = await supabase.rpc("guardar_stock_producto_inline", {
+      p_producto_id: producto.id,
+      p_stock_actual: stock,
+      p_stock_minimo: minimo,
+    });
+
+    if (error) {
+      setMensaje(error.message);
+    } else {
+      setMensaje("Stock actualizado.");
+      cancelarEdicionStock(producto.id);
+      await cargar();
+    }
+    setGuardando(false);
+  }
+
 
   return (
     <section className="grid gap-5">
@@ -440,13 +479,36 @@ export function CatalogoStockAdminPanel() {
               {itemsStock.map((item) => {
                 const producto = item.tipo_item === "producto" ? productos.find((productoItem) => productoItem.id === item.item_id) : null;
                 const combo = item.tipo_item === "combo" ? combos.find((comboItem) => comboItem.id === item.item_id) : null;
+                const editandoStock = Boolean(producto && stockEditando === item.item_id);
                 return (
                   <tr key={`${item.tipo_item}-${item.item_id}`} className="border-b border-antiguo/10 align-top">
                     <td className="py-3 pr-3 font-bold text-dorado">{item.tipo_item === "producto" ? "Producto" : "Combo"}</td>
                     <td className="py-3 pr-3 font-bold text-crema">{item.nombre}</td>
                     <td className="py-3 pr-3">{item.categoria ?? "-"}</td>
-                    <td className={Number(item.stock_disponible ?? 0) <= Number(item.stock_minimo ?? -1) ? "py-3 pr-3 font-black text-dorado" : "py-3 pr-3"}>{item.stock_disponible ?? "-"}</td>
-                    <td className="py-3 pr-3">{item.stock_minimo ?? "-"}</td>
+                    <td className={Number(item.stock_disponible ?? 0) <= Number(item.stock_minimo ?? -1) ? "py-3 pr-3 font-black text-dorado" : "py-3 pr-3"}>
+                      {editandoStock ? (
+                        <input
+                          type="number"
+                          min="0"
+                          inputMode="numeric"
+                          value={stockInline[item.item_id]?.stock ?? String(item.stock_disponible ?? 0)}
+                          onChange={(event) => setStockInline((actual) => ({ ...actual, [item.item_id]: { ...(actual[item.item_id] ?? { minimo: String(item.stock_minimo ?? 0) }), stock: event.target.value } }))}
+                          className="tap-target w-24 rounded-md border border-antiguo/20 bg-carbon px-2 text-crema"
+                        />
+                      ) : item.stock_disponible ?? "-"}
+                    </td>
+                    <td className="py-3 pr-3">
+                      {editandoStock ? (
+                        <input
+                          type="number"
+                          min="0"
+                          inputMode="numeric"
+                          value={stockInline[item.item_id]?.minimo ?? String(item.stock_minimo ?? 0)}
+                          onChange={(event) => setStockInline((actual) => ({ ...actual, [item.item_id]: { ...(actual[item.item_id] ?? { stock: String(item.stock_disponible ?? 0) }), minimo: event.target.value } }))}
+                          className="tap-target w-24 rounded-md border border-antiguo/20 bg-carbon px-2 text-crema"
+                        />
+                      ) : item.stock_minimo ?? "-"}
+                    </td>
                     <td className="py-3 pr-3">{formatoCOP(item.precio_venta)}</td>
                     <td className="py-3 pr-3">{formatoCOP(item.costo_estimado)}</td>
                     <td className="max-w-[300px] py-3 pr-3 text-xs text-antiguo/75">
@@ -455,8 +517,14 @@ export function CatalogoStockAdminPanel() {
                     <td className="py-3 pr-3">{item.activo ? "Activo" : "Inactivo"}</td>
                     <td className="py-3 pr-3">
                       <div className="flex flex-wrap gap-2">
-                        {producto ? <button onClick={() => editarProducto(producto)} className="rounded-md border border-antiguo/20 px-2 py-1 text-xs font-bold">Editar</button> : null}
-                        {producto && producto.activo ? <button onClick={() => desactivarProducto(producto)} className="rounded-md border border-red-300/30 px-2 py-1 text-xs font-bold text-red-100">Eliminar</button> : null}
+                        {producto && editandoStock ? (
+                          <>
+                            <button disabled={guardando} onClick={() => guardarStockInline(producto)} className="rounded-md bg-oro px-2 py-1 text-xs font-black text-carbon disabled:opacity-50">Guardar</button>
+                            <button disabled={guardando} onClick={() => cancelarEdicionStock(producto.id)} className="rounded-md border border-antiguo/20 px-2 py-1 text-xs font-bold disabled:opacity-50">Cancelar</button>
+                          </>
+                        ) : null}
+                        {producto && !editandoStock ? <button onClick={() => iniciarEdicionStock(producto)} className="rounded-md border border-antiguo/20 px-2 py-1 text-xs font-bold">Editar stock</button> : null}
+                        {producto && producto.activo && !editandoStock ? <button onClick={() => desactivarProducto(producto)} className="rounded-md border border-red-300/30 px-2 py-1 text-xs font-bold text-red-100">Eliminar</button> : null}
                         {combo ? <button onClick={() => editarCombo(combo)} className="rounded-md border border-antiguo/20 px-2 py-1 text-xs font-bold">Editar</button> : null}
                         {combo ? <button onClick={() => cambiarEstadoCombo(combo, !combo.activo)} className="rounded-md border border-red-300/30 px-2 py-1 text-xs font-bold text-red-100">{combo.activo ? "Eliminar" : "Reactivar"}</button> : null}
                       </div>

@@ -108,7 +108,7 @@ export function LoginForm() {
   const tabInactivo = "border-antiguo/15 bg-espresso text-antiguo hover:border-oro/50";
 
   return (
-    <form onSubmit={iniciarSesion} className="w-full rounded-lg border border-antiguo/20 bg-espresso/92 p-5 shadow-suave backdrop-blur">
+    <form onSubmit={iniciarSesion} className="w-full rounded-lg border border-antiguo/20 bg-espresso/92 p-4 shadow-suave backdrop-blur sm:p-5">
       <fieldset className="mb-5">
         <legend className="mb-2 text-xs font-black uppercase tracking-wide text-oro">Tipo de acceso</legend>
         <div className="grid grid-cols-2 gap-2">

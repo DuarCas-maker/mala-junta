@@ -207,10 +207,10 @@ export function MeserosAdmin() {
           </div>
         </aside>
 
-        <section className="min-w-0 px-4 py-5 sm:px-6 lg:px-8">
+        <section className="min-w-0 px-3 py-4 sm:px-6 sm:py-5 lg:px-8">
           <header className="mb-5 border-b border-antiguo/15 pb-4">
             <p className="text-sm font-bold uppercase tracking-wide text-oro">Modulo</p>
-            <h2 className="text-3xl font-black text-crema">{moduloActual.titulo}</h2>
+            <h2 className="text-2xl font-black text-crema sm:text-3xl">{moduloActual.titulo}</h2>
             <p className="mt-1 text-sm text-antiguo/70">{moduloActual.detalle}</p>
           </header>
 
@@ -264,7 +264,7 @@ function UsuariosAdminPanel({
 }) {
   return (
     <div className="grid gap-5 lg:grid-cols-[360px_1fr]">
-      <form onSubmit={crearMesero} className="rounded-lg border border-antiguo/15 bg-espresso p-4 shadow-suave">
+      <form onSubmit={crearMesero} className="rounded-lg border border-antiguo/15 bg-espresso p-3 shadow-suave sm:p-4">
         <h3 className="text-xl font-black text-crema">Crear mesero</h3>
         <label className="mt-4 block text-sm font-bold text-champana">
           Nombre
@@ -283,7 +283,7 @@ function UsuariosAdminPanel({
         </button>
       </form>
 
-      <section className="rounded-lg border border-antiguo/15 bg-espresso p-4 shadow-suave">
+      <section className="rounded-lg border border-antiguo/15 bg-espresso p-3 shadow-suave sm:p-4">
         <h3 className="text-xl font-black text-crema">Usuarios</h3>
         <div className="mt-4 overflow-x-auto">
           <table className="w-full min-w-[620px] border-collapse text-left text-sm">

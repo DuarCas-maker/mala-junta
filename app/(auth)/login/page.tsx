@@ -3,13 +3,13 @@ import Image from "next/image";
 
 export default function LoginPage() {
   return (
-    <main className="min-h-screen overflow-hidden bg-carbon px-4 py-6 text-champana sm:py-10">
+    <main className="min-h-screen overflow-hidden bg-carbon px-3 py-4 text-champana sm:px-4 sm:py-10">
       <section className="mx-auto flex min-h-[calc(100vh-3rem)] w-full max-w-5xl flex-col items-center gap-3">
         <div className="relative z-10 w-full max-w-md pt-2 sm:pt-6">
           <LoginForm />
         </div>
 
-        <div className="pointer-events-none relative min-h-[320px] w-full flex-1 overflow-hidden sm:min-h-[460px]">
+        <div className="pointer-events-none relative min-h-[220px] w-full flex-1 overflow-hidden sm:min-h-[460px]">
           <Image
             src="/brand/mala-junta-logo.jpeg"
             alt="Mala Junta Bar"

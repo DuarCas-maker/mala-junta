@@ -15,6 +15,7 @@
 html,
 body {
   min-height: 100%;
+  width: 100%;
 }
 
 body {
@@ -30,7 +31,20 @@ button,
 input,
 select,
 textarea {
+  max-width: 100%;
+  min-width: 0;
   font: inherit;
+}
+
+img,
+video,
+canvas,
+svg {
+  max-width: 100%;
+}
+
+.overflow-x-auto {
+  -webkit-overflow-scrolling: touch;
 }
 
 .tap-target {
