@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { CatalogoStockAdminPanel } from "@/components/admin/catalogo-stock-admin";
+import { InventarioConsultaPanel } from "@/components/caja/inventario-consulta-panel";
 import { CapturasVentaPanel } from "@/components/caja/capturas-venta-panel";
 import { CierreCajaPanel } from "@/components/caja/cierre-caja-panel";
 import { PedidoRapidoPanel } from "@/components/pedidos/pedido-rapido-panel";
@@ -23,6 +23,37 @@ const mediosPago: { id: MedioPago; nombre: string }[] = [
   { id: "transferencia", nombre: "Transferencia" },
 ];
 
+function normalizarCuentasCaja(data: unknown): Cuenta[] {
+  let cuentas: Cuenta[] = [];
+
+  if (Array.isArray(data)) cuentas = data;
+  else if (typeof data === "string") {
+    try {
+      const parsed = JSON.parse(data);
+      cuentas = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      cuentas = [];
+    }
+  }
+
+  return [...cuentas].sort((a, b) => {
+    const prioridadA = Number(a.prioridad_cobro ?? 99);
+    const prioridadB = Number(b.prioridad_cobro ?? 99);
+    if (prioridadA !== prioridadB) return prioridadA - prioridadB;
+
+    const pedidoA = Number(a.pedido_estado_prioridad ?? 99);
+    const pedidoB = Number(b.pedido_estado_prioridad ?? 99);
+    if (pedidoA !== pedidoB) return pedidoA - pedidoB;
+
+    const fechaA = new Date(a.ultimo_pedido_at ?? a.created_at ?? 0).getTime();
+    const fechaB = new Date(b.ultimo_pedido_at ?? b.created_at ?? 0).getTime();
+    return fechaB - fechaA;
+  });
+}
+
+function estadoCobroCuenta(cuenta: Cuenta) {
+  return cuenta.estado_cobro ?? cuenta.estado ?? "Abierta";
+}
 function totalPagado(cuenta: Cuenta) {
   return (cuenta.pagos ?? []).reduce((sum: number, pago: any) => sum + Number(pago.monto ?? 0), 0);
 }
@@ -104,7 +135,7 @@ export function CajaOperativa() {
       return;
     }
 
-    setCuentas(Array.isArray(cuentasRes.data) ? cuentasRes.data : []);
+    setCuentas(normalizarCuentasCaja(cuentasRes.data));
     setHistorial((historialRes.data ?? []) as PedidoHistorial[]);
     setActualizadoAt(new Date().toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
   }, []);
@@ -279,7 +310,7 @@ export function CajaOperativa() {
         </header>
 
         {moduloActivo === "inventario" ? (
-          <CatalogoStockAdminPanel />
+          <InventarioConsultaPanel />
         ) : moduloActivo === "pedidos" ? (
           <PedidoRapidoPanel
             perfil={perfil!}
@@ -362,7 +393,8 @@ export function CajaOperativa() {
                 <div className="flex flex-col gap-2 border-b border-antiguo/10 pb-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>
                     <p className="text-sm font-bold text-oro">{nombreMesa(cuenta)}</p>
-                    <h2 className="text-xl font-black text-crema">{cuenta.estado}</h2>
+                    <h2 className="text-xl font-black text-crema">{estadoCobroCuenta(cuenta)}</h2>
+                    <p className="text-xs text-antiguo/60">Estado cuenta: {cuenta.estado}</p>
                     {cuenta.responsable_pendiente ? <p className="text-sm text-dorado">Pendiente: {cuenta.responsable_pendiente}</p> : null}
                   </div>
                   <div className="text-left sm:text-right">

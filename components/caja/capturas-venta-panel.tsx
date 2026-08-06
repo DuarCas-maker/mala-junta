@@ -178,7 +178,7 @@ export function CapturasVentaPanel() {
     async function cargarCatalogo() {
       const supabase = supabaseBrowser();
       const [{ data: productos, error: productosError }, { data: combos, error: combosError }] = await Promise.all([
-        supabase.from("productos").select("id,nombre,precio_venta,presentacion_compra").eq("activo", true).order("nombre"),
+        supabase.from("v_productos_operativos").select("id,nombre,precio_venta,presentacion_compra").order("nombre"),
         supabase.from("combos").select("id,nombre,precio_venta").eq("activo", true).order("nombre"),
       ]);
 

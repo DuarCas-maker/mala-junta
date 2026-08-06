@@ -9,7 +9,6 @@ type Producto = {
   id: string;
   nombre: string;
   precio_venta: number;
-  costo_unitario_actual: number;
   codigo_interno: string | null;
   stock_actual: number;
   stock_minimo: number;
@@ -81,7 +80,7 @@ export function InventarioAdminPanel({ vista = "todo" }: { vista?: "catalogo" | 
       candidatosRes,
       auditoriasRes,
     ] = await Promise.all([
-      supabase.from("productos").select("id,nombre,precio_venta,costo_unitario_actual,codigo_interno,stock_actual,stock_minimo,presentacion_compra,factor_compra,activo,categorias(nombre)").order("nombre"),
+      supabase.from("productos").select("id,nombre,precio_venta,codigo_interno,stock_actual,stock_minimo,presentacion_compra,factor_compra,activo,categorias(nombre)").order("nombre"),
       supabase.from("categorias").select("id,nombre").eq("activa", true).order("nombre"),
       supabase.from("proveedores").select("id,nombre").eq("activo", true).order("nombre"),
       supabase.from("motivos").select("id,texto").eq("tipo", "ajuste_inventario").eq("activo", true).order("texto"),

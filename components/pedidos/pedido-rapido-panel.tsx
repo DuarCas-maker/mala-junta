@@ -16,6 +16,7 @@ type ItemVenta = {
   stock_actual?: number;
   presentacion_compra?: string | null;
   categorias?: { nombre: string } | { nombre: string }[] | null;
+  categoria?: string | null;
   componentes?: ComponenteVenta[];
 };
 type Cantidades = Record<string, number>;
@@ -37,7 +38,7 @@ const STORAGE_KEY = "mala-junta-pedidos-pendientes";
 function nombreCategoria(item: ItemVenta) {
   if (item.tipo === "combo") return "Combo";
   const categoria = Array.isArray(item.categorias) ? item.categorias[0] : item.categorias;
-  return categoria?.nombre ?? "Producto";
+  return item.categoria ?? categoria?.nombre ?? "Producto";
 }
 
 function nombreVisibleItem(item: ItemVenta) {
@@ -141,7 +142,7 @@ export function PedidoRapidoPanel({
       const supabase = supabaseBrowser();
       const [{ data: mesasData, error: mesasError }, { data: productosData, error: productosError }, { data: combosData, error: combosError }, { data: historialData, error: historialError }] = await Promise.all([
         supabase.from("mesas").select("id,nombre,zona,es_vip").eq("activa", true).order("nombre"),
-        supabase.from("productos").select("id,nombre,precio_venta,stock_actual,presentacion_compra,categorias(nombre)").eq("activo", true).order("nombre"),
+        supabase.from("v_productos_operativos").select("id,nombre,precio_venta,stock_actual,presentacion_compra,categoria").order("nombre"),
         supabase.from("combos").select("id,nombre,precio_venta,combo_items(id,cantidad,activo,productos(nombre,presentacion_compra))").eq("activo", true).order("nombre"),
         supabase
           .from("pedidos")
@@ -163,7 +164,8 @@ export function PedidoRapidoPanel({
         precio_venta: Number(producto.precio_venta),
         stock_actual: Number(producto.stock_actual ?? 0),
         presentacion_compra: producto.presentacion_compra,
-        categorias: producto.categorias,
+        categorias: null,
+        categoria: producto.categoria,
       }));
       const combos = ((combosData ?? []) as any[]).map((combo) => ({
         clave: `combo:${combo.id}`,
