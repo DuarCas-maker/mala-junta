@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { formatoCOP } from "@/lib/format";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 
@@ -20,11 +20,13 @@ type ItemCatalogo = {
 type CapturaVenta = {
   id: string;
   estado: string;
+  storage_bucket?: string | null;
   storage_path: string;
   nombre_archivo: string | null;
   modelo_ia: string | null;
   advertencias: string[] | null;
   created_at: string;
+  confirmado_at?: string | null;
 };
 
 type LineaRevision = {
@@ -65,6 +67,8 @@ type PagoRevision = {
 type GrupoRevision = {
   id: string;
   captura_id: string;
+  cuenta_id?: string | null;
+  pedido_id?: string | null;
   orden: number;
   texto_original: string | null;
   total_leido: number;
@@ -76,6 +80,8 @@ type GrupoRevision = {
   confianza_ia: number;
   requiere_revision: boolean;
   observacion: string | null;
+  confirmado_at?: string | null;
+  confirmado_por?: string | null;
   lineas: LineaRevision[];
   pagos: PagoRevision[];
 };
@@ -85,6 +91,10 @@ type RespuestaProceso = {
   grupos: GrupoRevision[];
   lineas?: LineaRevision[];
   pagos?: PagoRevision[];
+};
+
+type CapturaHistorial = RespuestaProceso & {
+  imagen_url: string | null;
 };
 
 const mediosPago: { id: MedioPago; nombre: string }[] = [
@@ -160,6 +170,27 @@ function diferenciaClass(tipo: TipoDiferencia) {
   return "border-antiguo/10 bg-espresso text-antiguo/80";
 }
 
+function resumenGrupos(grupos: GrupoRevision[]) {
+  const totalLeido = grupos.reduce((sum, grupo) => sum + Number(grupo.total_leido ?? 0), 0);
+  const totalEsperado = grupos.reduce((sum, grupo) => sum + Number(grupo.total_esperado ?? 0), 0);
+  const faltante = grupos.reduce((sum, grupo) => sum + (grupo.diferencia < 0 ? Math.abs(Number(grupo.diferencia)) : 0), 0);
+  const positivo = grupos.reduce((sum, grupo) => sum + (grupo.diferencia > 0 ? Number(grupo.diferencia) : 0), 0);
+  return {
+    totalLeido,
+    totalEsperado,
+    faltante,
+    positivo,
+    neto: positivo - faltante,
+    pendientesRevision: grupos.filter((grupo) => grupo.requiere_revision).length,
+    confirmadas: grupos.filter((grupo) => grupo.pedido_id).length,
+  };
+}
+
+function fechaCorta(fecha?: string | null) {
+  if (!fecha) return "-";
+  return new Date(fecha).toLocaleString("es-CO", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
 export function CapturasVentaPanel() {
   const [catalogo, setCatalogo] = useState<ItemCatalogo[]>([]);
   const [foto, setFoto] = useState<File | null>(null);
@@ -168,10 +199,77 @@ export function CapturasVentaPanel() {
   const [mensaje, setMensaje] = useState<string | null>(null);
   const [procesando, setProcesando] = useState(false);
   const [guardando, setGuardando] = useState(false);
+  const [confirmando, setConfirmando] = useState(false);
+  const [historial, setHistorial] = useState<CapturaHistorial[]>([]);
+  const [historialCargando, setHistorialCargando] = useState(false);
+  const [historialExpandido, setHistorialExpandido] = useState<Record<string, boolean>>({});
   const [lineasEliminadas, setLineasEliminadas] = useState<string[]>([]);
   const [pagosEliminados, setPagosEliminados] = useState<string[]>([]);
   const camaraInputRef = useRef<HTMLInputElement | null>(null);
   const galeriaInputRef = useRef<HTMLInputElement | null>(null);
+
+  const cargarHistorial = useCallback(async () => {
+    setHistorialCargando(true);
+    try {
+      const supabase = supabaseBrowser();
+      const { data: capturas, error } = await supabase
+        .from("capturas_venta")
+        .select("id,estado,storage_bucket,storage_path,nombre_archivo,modelo_ia,advertencias,created_at,confirmado_at")
+        .order("created_at", { ascending: false })
+        .limit(12);
+
+      if (error) throw new Error(error.message);
+      const lista = (capturas ?? []) as CapturaVenta[];
+      const ids = lista.map((captura) => captura.id);
+
+      const [{ data: grupos, error: gruposError }, { data: lineas, error: lineasError }, { data: pagos, error: pagosError }] = ids.length > 0
+        ? await Promise.all([
+            supabase.from("captura_venta_grupos").select("*").in("captura_id", ids).order("orden"),
+            supabase.from("captura_venta_lineas").select("*, productos(nombre,precio_venta), combos(nombre,precio_venta)").in("captura_id", ids).order("orden"),
+            supabase.from("captura_venta_pagos").select("*").in("captura_id", ids).order("orden"),
+          ])
+        : [{ data: [], error: null }, { data: [], error: null }, { data: [], error: null }];
+
+      if (gruposError) throw new Error(gruposError.message);
+      if (lineasError) throw new Error(lineasError.message);
+      if (pagosError) throw new Error(pagosError.message);
+
+      const imagenes = await Promise.all(
+        lista.map(async (captura) => {
+          const bucket = captura.storage_bucket ?? "capturas-ventas";
+          const { data } = await supabase.storage.from(bucket).createSignedUrl(captura.storage_path, 60 * 60);
+          return [captura.id, data?.signedUrl ?? null] as const;
+        }),
+      );
+      const imagenPorCaptura = new Map(imagenes);
+
+      setHistorial(
+        lista.map((captura) => {
+          const gruposCaptura = ((grupos ?? []) as GrupoRevision[])
+            .filter((grupo) => grupo.captura_id === captura.id)
+            .map((grupo) => ({
+              ...grupo,
+              lineas: ((lineas ?? []) as LineaRevision[]).filter((linea) => linea.grupo_id === grupo.id),
+              pagos: ((pagos ?? []) as PagoRevision[]).filter((pago) => pago.grupo_id === grupo.id),
+            }));
+
+          return {
+            captura,
+            grupos: gruposCaptura,
+            imagen_url: imagenPorCaptura.get(captura.id) ?? null,
+          };
+        }),
+      );
+    } catch (err) {
+      setMensaje(err instanceof Error ? err.message : "No se pudo cargar el historial de capturas.");
+    } finally {
+      setHistorialCargando(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void cargarHistorial();
+  }, [cargarHistorial]);
 
   useEffect(() => {
     let activo = true;
@@ -225,21 +323,7 @@ export function CapturasVentaPanel() {
     return () => URL.revokeObjectURL(url);
   }, [foto]);
 
-  const resumen = useMemo(() => {
-    const grupos = resultado?.grupos ?? [];
-    const totalLeido = grupos.reduce((sum, grupo) => sum + Number(grupo.total_leido ?? 0), 0);
-    const totalEsperado = grupos.reduce((sum, grupo) => sum + Number(grupo.total_esperado ?? 0), 0);
-    const faltante = grupos.reduce((sum, grupo) => sum + (grupo.diferencia < 0 ? Math.abs(Number(grupo.diferencia)) : 0), 0);
-    const positivo = grupos.reduce((sum, grupo) => sum + (grupo.diferencia > 0 ? Number(grupo.diferencia) : 0), 0);
-    return {
-      totalLeido,
-      totalEsperado,
-      faltante,
-      positivo,
-      neto: positivo - faltante,
-      pendientesRevision: grupos.filter((grupo) => grupo.requiere_revision).length,
-    };
-  }, [resultado]);
+  const resumen = useMemo(() => resumenGrupos(resultado?.grupos ?? []), [resultado]);
 
   function seleccionarArchivo(file: File | null) {
     setFoto(file);
@@ -408,6 +492,7 @@ export function CapturasVentaPanel() {
 
       setResultado(data as RespuestaProceso);
       setMensaje("Lectura lista por ventas. Todavia no se registra una venta real.");
+      void cargarHistorial();
     } catch (err) {
       setMensaje(err instanceof Error ? err.message : "No se pudo procesar la foto.");
     } finally {
@@ -415,8 +500,12 @@ export function CapturasVentaPanel() {
     }
   }
 
-  async function guardarRevision() {
-    if (!resultado) return;
+  async function guardarRevision(options: { silencioso?: boolean } = {}) {
+    if (!resultado) return false;
+    if (resultado.captura.estado === "confirmada") {
+      setMensaje("Esta captura ya fue confirmada y no se puede volver a guardar.");
+      return false;
+    }
     setMensaje(null);
     setGuardando(true);
 
@@ -468,13 +557,60 @@ export function CapturasVentaPanel() {
       });
       setLineasEliminadas([]);
       setPagosEliminados([]);
-      setMensaje("Revision guardada. Las diferencias quedan listas para ajustar en Fase 2.");
+      if (!options.silencioso) setMensaje("Revision guardada. Ya puedes confirmar para descontar inventario.");
+      void cargarHistorial();
+      return true;
     } catch (err) {
       setMensaje(err instanceof Error ? err.message : "No se pudo guardar la revision.");
+      return false;
     } finally {
       setGuardando(false);
     }
   }
+
+  async function confirmarCaptura() {
+    if (!resultado) return;
+
+    const grupos = resultado.grupos.map(recalcularGrupo);
+    const pendientes = grupos.filter((grupo) => grupo.requiere_revision).length;
+    if (pendientes > 0) {
+      setMensaje(`Hay ${pendientes} venta(s) pendientes por revisar antes de descontar inventario.`);
+      return;
+    }
+
+    if (grupos.some((grupo) => grupo.pedido_id)) {
+      setMensaje("Esta captura ya tiene ventas confirmadas.");
+      return;
+    }
+
+    setConfirmando(true);
+    setMensaje(null);
+
+    try {
+      const revisionGuardada = await guardarRevision({ silencioso: true });
+      if (!revisionGuardada) return;
+
+      const supabase = supabaseBrowser();
+      const { data, error } = await supabase.rpc("confirmar_captura_venta", { p_captura_id: resultado.captura.id });
+      if (error) throw new Error(error.message);
+
+      const recargado = await recargarResultado(supabase, resultado.captura.id);
+      const ventasConfirmadas = Number((data as { ventas_confirmadas?: number } | null)?.ventas_confirmadas ?? recargado.length);
+      setResultado({
+        captura: { ...resultado.captura, estado: "confirmada", confirmado_at: new Date().toISOString() },
+        grupos: recargado,
+      });
+      setMensaje(`Captura confirmada. Se registraron ${ventasConfirmadas} venta(s) y se desconto inventario.`);
+      await cargarHistorial();
+    } catch (err) {
+      setMensaje(err instanceof Error ? err.message : "No se pudo confirmar la captura.");
+    } finally {
+      setConfirmando(false);
+    }
+  }
+
+  const capturaConfirmada = resultado?.captura.estado === "confirmada";
+  const puedeConfirmar = Boolean(resultado && resultado.grupos.length > 0 && resumen.pendientesRevision === 0 && resumen.confirmadas === 0 && !capturaConfirmada);
 
   return (
     <section className="rounded-lg border border-antiguo/15 bg-espresso p-3 shadow-suave sm:p-4">
@@ -587,11 +723,98 @@ export function CapturasVentaPanel() {
           {resultado.grupos.length === 0 ? <p className="rounded-md border border-antiguo/10 bg-carbon p-4 text-center text-sm text-antiguo/70">No se detectaron ventas.</p> : null}
 
           <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-center">
-            <p className="text-xs text-antiguo/60">Este guardado solo conserva la revision asistida. La confirmacion transaccional entra en la Fase 2.</p>
-            <button type="button" onClick={guardarRevision} disabled={guardando} className="tap-target rounded-md bg-oro px-4 text-sm font-black text-carbon disabled:opacity-50">{guardando ? "Guardando..." : "Guardar revision"}</button>
+            <p className="text-xs text-antiguo/60">Guarda la revision antes de confirmar. Confirmar crea ventas reales, registra pagos y descuenta inventario.</p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <button type="button" onClick={() => void guardarRevision()} disabled={guardando || confirmando || capturaConfirmada} className="tap-target rounded-md bg-oro px-4 text-sm font-black text-carbon disabled:opacity-50">{guardando ? "Guardando..." : "Guardar revision"}</button>
+              <button type="button" onClick={() => void confirmarCaptura()} disabled={!puedeConfirmar || guardando || confirmando} className="tap-target rounded-md bg-green-600 px-4 text-sm font-black text-white disabled:opacity-50">{confirmando ? "Confirmando..." : "Confirmar y descontar"}</button>
+            </div>
           </div>
         </div>
       ) : null}
+
+      <section className="mt-5 rounded-md border border-antiguo/10 bg-carbon p-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="text-base font-black text-crema">Historial de subidas</h3>
+            <p className="text-xs text-antiguo/60">{historialCargando ? "Cargando..." : `${historial.length} captura(s) recientes`}</p>
+          </div>
+          <button type="button" onClick={() => void cargarHistorial()} className="tap-target rounded-md border border-antiguo/20 px-3 text-xs font-bold">Actualizar</button>
+        </div>
+
+        <div className="mt-3 space-y-2">
+          {historial.map((item) => {
+            const resumenCaptura = resumenGrupos(item.grupos);
+            const expandida = Boolean(historialExpandido[item.captura.id]);
+            return (
+              <article key={item.captura.id} className="rounded-md border border-antiguo/10 bg-espresso">
+                <button
+                  type="button"
+                  onClick={() => setHistorialExpandido((actual) => ({ ...actual, [item.captura.id]: !actual[item.captura.id] }))}
+                  className="flex w-full flex-col gap-3 p-3 text-left sm:grid sm:grid-cols-[96px_1fr_auto] sm:items-center"
+                >
+                  <div className="flex h-20 w-full items-center justify-center overflow-hidden rounded-md border border-antiguo/10 bg-carbon sm:w-24">
+                    {item.imagen_url ? <Image src={item.imagen_url} alt="Captura subida" width={160} height={120} unoptimized className="h-full w-full object-cover" /> : <span className="text-xs text-antiguo/50">Sin imagen</span>}
+                  </div>
+                  <div>
+                    <p className="text-sm font-black text-crema">{fechaCorta(item.captura.created_at)} - {item.captura.estado}</p>
+                    <p className="mt-1 text-xs text-antiguo/60">{item.captura.nombre_archivo ?? "Imagen de venta"}</p>
+                    <div className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+                      <span>Ventas: <strong className="text-dorado">{item.grupos.length}</strong></span>
+                      <span>Leido: <strong className="text-dorado">{formatoCOP(resumenCaptura.totalLeido)}</strong></span>
+                      <span>Faltante: <strong className="text-red-100">{formatoCOP(resumenCaptura.faltante)}</strong></span>
+                      <span>Positivo: <strong className="text-green-100">{formatoCOP(resumenCaptura.positivo)}</strong></span>
+                    </div>
+                  </div>
+                  <span className="rounded-md border border-antiguo/15 px-3 py-2 text-center text-xs font-bold text-antiguo/80">{expandida ? "Ocultar" : "Ver items"}</span>
+                </button>
+
+                {expandida ? (
+                  <div className="border-t border-antiguo/10 p-3">
+                    {item.imagen_url ? <Image src={item.imagen_url} alt="Foto de la captura" width={900} height={700} unoptimized className="max-h-[520px] w-full rounded-md object-contain" /> : null}
+                    <div className="mt-3 space-y-3">
+                      {item.grupos.map((grupo) => (
+                        <div key={grupo.id} className="rounded-md border border-antiguo/10 bg-carbon p-3">
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                            <div>
+                              <p className="text-xs font-bold uppercase tracking-wide text-oro">Venta {grupo.orden}</p>
+                              <p className="text-sm text-antiguo/70">{grupo.texto_original ?? "Sin texto"}</p>
+                              {grupo.pedido_id ? <p className="mt-1 text-xs font-bold text-green-100">Pedido confirmado</p> : null}
+                            </div>
+                            <div className={`rounded-md border px-3 py-2 text-sm font-bold ${diferenciaClass(grupo.tipo_diferencia)}`}>Diferencia {formatoCOP(grupo.diferencia)}</div>
+                          </div>
+                          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                            <div className="space-y-2">
+                              <p className="text-xs font-bold text-dorado">Items</p>
+                              {grupo.lineas.map((linea) => (
+                                <div key={linea.id} className="grid grid-cols-[56px_1fr_auto] gap-2 rounded-md border border-antiguo/10 bg-espresso p-2 text-sm">
+                                  <span className="font-bold text-crema">x{linea.cantidad}</span>
+                                  <span className="text-antiguo/80">{nombreDetectado(linea)}</span>
+                                  <span className="font-bold text-dorado">{formatoCOP(linea.subtotal_esperado)}</span>
+                                </div>
+                              ))}
+                            </div>
+                            <div className="space-y-2">
+                              <p className="text-xs font-bold text-dorado">Pagos</p>
+                              {grupo.pagos.map((pago) => (
+                                <div key={pago.id} className="grid grid-cols-[1fr_auto] gap-2 rounded-md border border-antiguo/10 bg-espresso p-2 text-sm">
+                                  <span className="text-antiguo/80">{nombreMedio(pago.medio_normalizado)}{pago.cuenta_destino ? ` - ${pago.cuenta_destino}` : ""}</span>
+                                  <span className="font-bold text-dorado">{formatoCOP(pago.monto)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </article>
+            );
+          })}
+
+          {historial.length === 0 && !historialCargando ? <p className="rounded-md border border-antiguo/10 bg-espresso p-4 text-center text-sm text-antiguo/70">No hay capturas guardadas.</p> : null}
+        </div>
+      </section>
     </section>
   );
 }
