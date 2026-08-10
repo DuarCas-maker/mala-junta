@@ -9,6 +9,7 @@ type Producto = {
   id: string;
   nombre: string;
   precio_venta: number;
+  costo_unitario_actual: number;
   codigo_interno: string | null;
   stock_actual: number;
   stock_minimo: number;
@@ -54,7 +55,6 @@ export function InventarioAdminPanel({ vista = "todo" }: { vista?: "catalogo" | 
   const [compraProducto, setCompraProducto] = useState("");
   const [compraModo, setCompraModo] = useState<"unidades" | "presentacion">("unidades");
   const [compraCantidad, setCompraCantidad] = useState("");
-  const [compraCosto, setCompraCosto] = useState("");
 
   const [comboNombre, setComboNombre] = useState("");
   const [comboPrecio, setComboPrecio] = useState("");
@@ -80,7 +80,7 @@ export function InventarioAdminPanel({ vista = "todo" }: { vista?: "catalogo" | 
       candidatosRes,
       auditoriasRes,
     ] = await Promise.all([
-      supabase.from("productos").select("id,nombre,precio_venta,codigo_interno,stock_actual,stock_minimo,presentacion_compra,factor_compra,activo,categorias(nombre)").order("nombre"),
+      supabase.from("productos").select("id,nombre,precio_venta,costo_unitario_actual,codigo_interno,stock_actual,stock_minimo,presentacion_compra,factor_compra,activo,categorias(nombre)").order("nombre"),
       supabase.from("categorias").select("id,nombre").eq("activa", true).order("nombre"),
       supabase.from("proveedores").select("id,nombre").eq("activo", true).order("nombre"),
       supabase.from("motivos").select("id,texto").eq("tipo", "ajuste_inventario").eq("activo", true).order("texto"),
@@ -111,6 +111,11 @@ export function InventarioAdminPanel({ vista = "todo" }: { vista?: "catalogo" | 
   }, [cargar]);
 
   const auditoriaActiva = useMemo(() => auditorias.find((auditoria) => auditoria.estado === "en_curso"), [auditorias]);
+  const productoCompraSeleccionado = productos.find((producto) => producto.id === compraProducto) ?? null;
+  const costoCompraCatalogo = Number(productoCompraSeleccionado?.costo_unitario_actual ?? 0);
+  const factorCompraAplicado = compraModo === "presentacion" ? Number(productoCompraSeleccionado?.factor_compra ?? 1) : 1;
+  const unidadesCompraEstimadas = Number(compraCantidad || 0) * factorCompraAplicado;
+  const totalCompraEstimado = unidadesCompraEstimadas * costoCompraCatalogo;
   const mostrarCatalogo = vista === "todo" || vista === "catalogo";
   const mostrarAuditoria = vista === "todo" || vista === "auditoria";
 
@@ -166,27 +171,28 @@ export function InventarioAdminPanel({ vista = "todo" }: { vista?: "catalogo" | 
 
   async function registrarCompra(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const producto = productos.find((item) => item.id === compraProducto);
+
+    if (!productoCompraSeleccionado || costoCompraCatalogo <= 0) {
+      setMensaje("Configura primero el costo de compra del producto en catalogo.");
+      return;
+    }
+
     const supabase = supabaseBrowser();
     await ejecutar(
       () => supabase.rpc("registrar_compra", {
-        p_proveedor_id: compraProveedor || null,
+        p_proveedor_id: compraProveedor,
         p_items: [{
           producto_id: compraProducto,
           modo: compraModo,
           cantidad_ingresada: Number(compraCantidad),
-          factor_aplicado: compraModo === "presentacion" ? Number(producto?.factor_compra ?? 1) : 1,
-          costo_unitario: Number(compraCosto),
         }],
         p_fecha: new Date().toISOString().slice(0, 10),
         p_observacion: null,
       }),
-      "Compra registrada y stock actualizado.",
+      "Compra registrada con costo de catalogo y stock actualizado.",
     );
     setCompraCantidad("");
-    setCompraCosto("");
   }
-
   async function crearCombo(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const items = [
@@ -290,7 +296,7 @@ export function InventarioAdminPanel({ vista = "todo" }: { vista?: "catalogo" | 
           </form>
           <form onSubmit={registrarCompra} className="mt-4 grid gap-2">
             <select value={compraProveedor} onChange={(event) => setCompraProveedor(event.target.value)} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
-              <option value="">Proveedor opcional</option>
+              <option value="">Proveedor obligatorio</option>
               {proveedores.map((proveedor) => <option key={proveedor.id} value={proveedor.id}>{proveedor.nombre}</option>)}
             </select>
             <select value={compraProducto} onChange={(event) => setCompraProducto(event.target.value)} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
@@ -303,9 +309,19 @@ export function InventarioAdminPanel({ vista = "todo" }: { vista?: "catalogo" | 
             </select>
             <div className="grid grid-cols-2 gap-2">
               <input value={compraCantidad} onChange={(event) => setCompraCantidad(event.target.value)} type="number" min="1" placeholder="Cantidad" className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
-              <input value={compraCosto} onChange={(event) => setCompraCosto(event.target.value)} type="number" min="0" placeholder="Costo unitario" className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
+              <div className="rounded-md border border-antiguo/20 bg-carbon px-3 py-2 text-sm">
+                <p className="text-xs font-bold text-antiguo/60">Costo catalogo</p>
+                <p className={costoCompraCatalogo > 0 ? "font-black text-dorado" : "font-black text-red-100"}>{productoCompraSeleccionado ? formatoCOP(costoCompraCatalogo) : "Selecciona producto"}</p>
+              </div>
             </div>
-            <button disabled={guardando || !compraProducto || !compraCantidad} className="tap-target rounded-md bg-oro px-4 font-black text-carbon disabled:opacity-50">Registrar compra</button>
+            {productoCompraSeleccionado ? (
+              <div className={costoCompraCatalogo > 0 ? "rounded-md border border-antiguo/10 bg-carbon p-3 text-sm text-antiguo/80" : "rounded-md border border-red-300/30 bg-red-950/20 p-3 text-sm text-red-100"}>
+                {costoCompraCatalogo > 0
+                  ? `Entraran ${unidadesCompraEstimadas || 0} unidad(es). Total estimado: ${formatoCOP(totalCompraEstimado)}.`
+                  : "Este producto no tiene costo configurado. Editalo antes de registrar compra."}
+              </div>
+            ) : null}
+            <button disabled={guardando || !compraProveedor || !compraProducto || !compraCantidad || costoCompraCatalogo <= 0} className="tap-target rounded-md bg-oro px-4 font-black text-carbon disabled:opacity-50">Registrar compra</button>
           </form>
         </section>
 

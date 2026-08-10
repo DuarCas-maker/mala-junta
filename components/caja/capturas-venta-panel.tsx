@@ -80,6 +80,8 @@ type GrupoRevision = {
   confianza_ia: number;
   requiere_revision: boolean;
   observacion: string | null;
+  aprobado?: boolean;
+  aprobado_at?: string | null;
   confirmado_at?: string | null;
   confirmado_por?: string | null;
   lineas: LineaRevision[];
@@ -181,7 +183,7 @@ function resumenGrupos(grupos: GrupoRevision[]) {
     faltante,
     positivo,
     neto: positivo - faltante,
-    pendientesRevision: grupos.filter((grupo) => grupo.requiere_revision).length,
+    pendientesRevision: grupos.filter((grupo) => !grupo.pedido_id && (grupo.requiere_revision || !grupo.aprobado)).length,
     confirmadas: grupos.filter((grupo) => grupo.pedido_id).length,
   };
 }
@@ -189,6 +191,32 @@ function resumenGrupos(grupos: GrupoRevision[]) {
 function fechaCorta(fecha?: string | null) {
   if (!fecha) return "-";
   return new Date(fecha).toLocaleString("es-CO", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+function totalPagosGrupo(grupo: GrupoRevision) {
+  return grupo.pagos.reduce((sum, pago) => sum + Number(pago.monto ?? 0), 0);
+}
+
+function problemasGrupo(grupo: GrupoRevision) {
+  const problemas: string[] = [];
+  const revisado = recalcularGrupo(grupo);
+
+  if (grupo.lineas.length === 0) problemas.push("agrega al menos un item");
+  if (grupo.lineas.some((linea) => linea.tipo_item === "desconocido" || (!linea.producto_id && !linea.combo_id))) problemas.push("hay items sin producto/combo oficial");
+  if (grupo.lineas.some((linea) => Number(linea.cantidad ?? 0) <= 0)) problemas.push("hay cantidades invalidas");
+  if (grupo.pagos.length === 0) problemas.push("agrega al menos un pago");
+  if (grupo.pagos.some((pago) => !pago.medio_normalizado || Number(pago.monto ?? 0) <= 0)) problemas.push("hay pagos sin medio o monto");
+  if (totalPagosGrupo(grupo) !== Number(grupo.total_leido ?? 0)) problemas.push("los pagos no coinciden con el total leido");
+  if (revisado.tipo_diferencia === "negativa" && !revisado.descuento_autorizado) problemas.push("autoriza el faltante o corrige el total");
+  if (revisado.tipo_diferencia === "positiva" && !revisado.ingreso_adicional) problemas.push("marca el positivo como ingreso adicional o corrige el total");
+
+  return problemas;
+}
+
+function estadoVenta(grupo: GrupoRevision) {
+  if (grupo.pedido_id) return { texto: "Confirmada", clase: "border-green-300/40 bg-green-950/30 text-green-100" };
+  if (grupo.aprobado && !grupo.requiere_revision) return { texto: "Aprobada", clase: "border-blue-200/50 bg-blue-950/25 text-blue-100" };
+  return { texto: "Requiere revision", clase: "border-white bg-white/10 text-white" };
 }
 
 export function CapturasVentaPanel() {
@@ -200,6 +228,7 @@ export function CapturasVentaPanel() {
   const [procesando, setProcesando] = useState(false);
   const [guardando, setGuardando] = useState(false);
   const [confirmando, setConfirmando] = useState(false);
+  const [eliminando, setEliminando] = useState<string | null>(null);
   const [historial, setHistorial] = useState<CapturaHistorial[]>([]);
   const [historialCargando, setHistorialCargando] = useState(false);
   const [historialExpandido, setHistorialExpandido] = useState<Record<string, boolean>>({});
@@ -338,7 +367,11 @@ export function CapturasVentaPanel() {
       if (!actual) return actual;
       return {
         ...actual,
-        grupos: actual.grupos.map((grupo) => (grupo.id === id ? recalcularGrupo({ ...grupo, ...cambios }) : grupo)),
+        grupos: actual.grupos.map((grupo) => {
+          if (grupo.id !== id) return grupo;
+          const mantieneAprobacion = "aprobado" in cambios || "aprobado_at" in cambios;
+          return recalcularGrupo({ ...grupo, ...cambios, ...(mantieneAprobacion ? {} : { aprobado: false, aprobado_at: null }) });
+        }),
       };
     });
   }
@@ -361,7 +394,7 @@ export function CapturasVentaPanel() {
             }
             return siguiente;
           });
-          return recalcularGrupo({ ...grupo, lineas });
+          return recalcularGrupo({ ...grupo, aprobado: false, aprobado_at: null, lineas });
         }),
       };
     });
@@ -375,7 +408,7 @@ export function CapturasVentaPanel() {
         grupos: actual.grupos.map((grupo) => {
           if (grupo.id !== grupoId) return grupo;
           const pagos = grupo.pagos.map((pago) => (pago.id === pagoId ? { ...pago, ...cambios } : pago));
-          return recalcularGrupo({ ...grupo, pagos });
+          return recalcularGrupo({ ...grupo, aprobado: false, aprobado_at: null, pagos });
         }),
       };
     });
@@ -428,7 +461,7 @@ export function CapturasVentaPanel() {
       if (!actual) return actual;
       return {
         ...actual,
-        grupos: actual.grupos.map((grupo) => grupo.id === grupoId ? recalcularGrupo({ ...grupo, lineas: grupo.lineas.filter((actualLinea) => actualLinea.id !== linea.id) }) : grupo),
+        grupos: actual.grupos.map((grupo) => grupo.id === grupoId ? recalcularGrupo({ ...grupo, aprobado: false, aprobado_at: null, lineas: grupo.lineas.filter((actualLinea) => actualLinea.id !== linea.id) }) : grupo),
       };
     });
   }
@@ -455,9 +488,82 @@ export function CapturasVentaPanel() {
       if (!actual) return actual;
       return {
         ...actual,
-        grupos: actual.grupos.map((grupo) => grupo.id === grupoId ? recalcularGrupo({ ...grupo, pagos: grupo.pagos.filter((actualPago) => actualPago.id !== pago.id) }) : grupo),
+        grupos: actual.grupos.map((grupo) => grupo.id === grupoId ? recalcularGrupo({ ...grupo, aprobado: false, aprobado_at: null, pagos: grupo.pagos.filter((actualPago) => actualPago.id !== pago.id) }) : grupo),
       };
     });
+  }
+
+  function marcarGrupoRevision(grupoId: string) {
+    actualizarGrupo(grupoId, { requiere_revision: true, aprobado: false, aprobado_at: null });
+  }
+
+  function aprobarGrupo(grupo: GrupoRevision) {
+    const problemas = problemasGrupo(grupo);
+    if (problemas.length > 0) {
+      setMensaje(`Venta ${grupo.orden} no se puede aprobar: ${problemas.join(", ")}.`);
+      return;
+    }
+
+    setResultado((actual) => {
+      if (!actual) return actual;
+      return {
+        ...actual,
+        grupos: actual.grupos.map((actualGrupo) => {
+          if (actualGrupo.id !== grupo.id) return actualGrupo;
+          const lineas = actualGrupo.lineas.map((linea) => ({ ...linea, requiere_revision: false }));
+          const pagos = actualGrupo.pagos.map((pago) => ({ ...pago, requiere_revision: false }));
+          return recalcularGrupo({
+            ...actualGrupo,
+            lineas,
+            pagos,
+            aprobado: true,
+            aprobado_at: new Date().toISOString(),
+            requiere_revision: false,
+          });
+        }),
+      };
+    });
+    setMensaje(`Venta ${grupo.orden} aprobada. Guarda la revision antes de confirmar.`);
+  }
+
+  async function agregarVenta() {
+    if (!resultado) return;
+    if (resultado.captura.estado === "confirmada") {
+      setMensaje("Esta captura ya fue confirmada y no permite agregar ventas.");
+      return;
+    }
+
+    setGuardando(true);
+    setMensaje(null);
+    try {
+      const supabase = supabaseBrowser();
+      const orden = resultado.grupos.reduce((max, grupo) => Math.max(max, Number(grupo.orden ?? 0)), 0) + 1;
+      const { error } = await supabase.from("captura_venta_grupos").insert({
+        captura_id: resultado.captura.id,
+        orden,
+        texto_original: "Venta agregada manualmente",
+        total_leido: 0,
+        total_esperado: 0,
+        diferencia: 0,
+        tipo_diferencia: "cero",
+        descuento_autorizado: false,
+        ingreso_adicional: false,
+        confianza_ia: 1,
+        requiere_revision: true,
+        aprobado: false,
+        observacion: "Venta agregada manualmente despues de la lectura",
+      });
+      if (error) throw new Error(error.message);
+
+      const recargado = await recargarResultado(supabase, resultado.captura.id);
+      setResultado({ ...resultado, grupos: recargado });
+      setMensaje(`Venta ${orden} agregada. Completa items, pagos y apruebala.`);
+      await cargarHistorial();
+    } catch (err) {
+      setMensaje(err instanceof Error ? err.message : "No se pudo agregar la venta.");
+    } finally {
+      setGuardando(false);
+    }
   }
 
   async function procesarFoto(event: FormEvent<HTMLFormElement>) {
@@ -532,6 +638,8 @@ export function CapturasVentaPanel() {
             descuento_autorizado: grupo.descuento_autorizado,
             ingreso_adicional: grupo.ingreso_adicional,
             requiere_revision: grupo.requiere_revision,
+            aprobado: Boolean(grupo.aprobado),
+            aprobado_at: grupo.aprobado ? (grupo.aprobado_at ?? new Date().toISOString()) : null,
             observacion: grupo.observacion,
           })
           .eq("id", grupo.id),
@@ -543,7 +651,7 @@ export function CapturasVentaPanel() {
       const error = respuestas.find((respuesta) => respuesta.error)?.error;
       if (error) throw new Error(error.message);
 
-      const sigueDudosa = grupos.some((grupo) => grupo.requiere_revision);
+      const sigueDudosa = grupos.some((grupo) => grupo.requiere_revision || !grupo.aprobado);
       const { error: capturaError } = await supabase
         .from("capturas_venta")
         .update({ estado: sigueDudosa ? "requiere_revision" : "procesada" })
@@ -609,6 +717,62 @@ export function CapturasVentaPanel() {
     }
   }
 
+  async function refrescarResultadoActual(capturaId: string, capturaEliminada = false) {
+    await cargarHistorial();
+    if (resultado?.captura.id !== capturaId) return;
+
+    if (capturaEliminada) {
+      setResultado(null);
+      return;
+    }
+
+    const supabase = supabaseBrowser();
+    const [{ data: captura, error: capturaError }, grupos] = await Promise.all([
+      supabase.from("capturas_venta").select("id,estado,storage_bucket,storage_path,nombre_archivo,modelo_ia,advertencias,created_at,confirmado_at").eq("id", capturaId).maybeSingle(),
+      recargarResultado(supabase, capturaId),
+    ]);
+    if (capturaError) throw new Error(capturaError.message);
+    setResultado((actual) => actual ? { captura: { ...actual.captura, ...(captura ?? {}) }, grupos } : actual);
+  }
+
+  async function eliminarCapturaHistorial(capturaId: string) {
+    if (!window.confirm("Eliminar esta captura anulara sus pedidos/pagos confirmados y devolvera inventario. Continuar?")) return;
+
+    setEliminando(capturaId);
+    setMensaje(null);
+    try {
+      const supabase = supabaseBrowser();
+      const { data, error } = await supabase.rpc("eliminar_captura_venta", { p_captura_id: capturaId });
+      if (error) throw new Error(error.message);
+      const ventas = Number((data as { ventas_eliminadas?: number } | null)?.ventas_eliminadas ?? 0);
+      setMensaje(`Captura eliminada. Se anularon ${ventas} venta(s) y se devolvio inventario cuando aplicaba.`);
+      await refrescarResultadoActual(capturaId, true);
+    } catch (err) {
+      setMensaje(err instanceof Error ? err.message : "No se pudo eliminar la captura.");
+    } finally {
+      setEliminando(null);
+    }
+  }
+
+  async function eliminarVentaHistorial(grupo: GrupoRevision) {
+    if (!window.confirm(`Eliminar venta ${grupo.orden} anulara su pedido/pagos si ya estaba confirmada. Continuar?`)) return;
+
+    setEliminando(grupo.id);
+    setMensaje(null);
+    try {
+      const supabase = supabaseBrowser();
+      const { data, error } = await supabase.rpc("eliminar_venta_captura", { p_grupo_id: grupo.id });
+      if (error) throw new Error(error.message);
+      const capturaEliminada = Boolean((data as { captura_eliminada?: boolean } | null)?.captura_eliminada);
+      setMensaje(`Venta ${grupo.orden} eliminada. Si estaba confirmada, se anulo y devolvio inventario.`);
+      await refrescarResultadoActual(grupo.captura_id, capturaEliminada);
+    } catch (err) {
+      setMensaje(err instanceof Error ? err.message : "No se pudo eliminar la venta.");
+    } finally {
+      setEliminando(null);
+    }
+  }
+
   const capturaConfirmada = resultado?.captura.estado === "confirmada";
   const puedeConfirmar = Boolean(resultado && resultado.grupos.length > 0 && resumen.pendientesRevision === 0 && resumen.confirmadas === 0 && !capturaConfirmada);
 
@@ -654,7 +818,7 @@ export function CapturasVentaPanel() {
       {mensaje ? <p className="mt-3 rounded-md border border-antiguo/15 bg-carbon p-3 text-sm text-champana">{mensaje}</p> : null}
 
       {resultado ? (
-        <div className="mt-4 space-y-4">
+        <div className="mt-4 space-y-[23px]">
           <div className="rounded-md border border-oro/20 bg-carbon p-3">
             <div className="grid gap-2 text-sm sm:grid-cols-4">
               <p>Total leido: <strong className="text-dorado">{formatoCOP(resumen.totalLeido)}</strong></p>
@@ -662,11 +826,12 @@ export function CapturasVentaPanel() {
               <p>Faltante: <strong className="text-red-100">{formatoCOP(resumen.faltante)}</strong></p>
               <p>Positivo: <strong className="text-green-100">{formatoCOP(resumen.positivo)}</strong></p>
             </div>
+            <button type="button" onClick={() => void agregarVenta()} disabled={guardando || confirmando || capturaConfirmada} className="tap-target mt-3 rounded-md border border-white/40 px-4 text-sm font-black text-white disabled:opacity-50">Agregar venta</button>
           </div>
 
           {resultado.grupos.map((grupo) => (
-            <article key={grupo.id} className="rounded-md border border-antiguo/10 bg-carbon p-3">
-              <div className="flex flex-col gap-2 border-b border-antiguo/10 pb-3 sm:flex-row sm:items-start sm:justify-between">
+            <article key={grupo.id} className="rounded-md border-2 border-white bg-carbon p-3 shadow-[0_0_0_1px_rgba(255,255,255,0.08)]">
+              <div className="flex flex-col gap-2 border-b border-white/25 pb-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <p className="text-xs font-bold uppercase tracking-wide text-oro">Venta {grupo.orden}</p>
                   <p className="text-sm text-antiguo/70">Leido: {grupo.texto_original ?? "-"}</p>
@@ -680,12 +845,18 @@ export function CapturasVentaPanel() {
               <div className="mt-3 grid gap-2 sm:grid-cols-3">
                 <label className="text-xs font-bold text-antiguo/80">Total leido<input type="number" min="0" inputMode="numeric" value={grupo.total_leido} onChange={(event) => actualizarGrupo(grupo.id, { total_leido: Number(event.target.value) })} className="tap-target mt-1 w-full rounded-md border border-antiguo/20 bg-espresso px-3 text-crema" /></label>
                 <div className="rounded-md border border-antiguo/10 bg-espresso p-3 text-sm"><p className="text-antiguo/60">Esperado catalogo</p><p className="font-black text-dorado">{formatoCOP(grupo.total_esperado)}</p></div>
-                <label className="flex items-center gap-2 rounded-md border border-antiguo/10 bg-espresso px-3 text-sm font-bold"><input type="checkbox" checked={grupo.requiere_revision} onChange={(event) => actualizarGrupo(grupo.id, { requiere_revision: event.target.checked })} />Revisar</label>
+                <div className="rounded-md border border-antiguo/10 bg-espresso p-3 text-sm"><p className="text-antiguo/60">Estado</p><p className={`mt-1 inline-flex rounded-md border px-2 py-1 text-xs font-black ${estadoVenta(grupo).clase}`}>{estadoVenta(grupo).texto}</p></div>
               </div>
 
               {grupo.tipo_diferencia === "negativa" ? <label className="mt-2 flex items-center gap-2 rounded-md border border-red-400/20 bg-red-950/20 px-3 py-2 text-sm"><input type="checkbox" checked={grupo.descuento_autorizado} onChange={(event) => actualizarGrupo(grupo.id, { descuento_autorizado: event.target.checked })} />Descuento/faltante autorizado</label> : null}
               {grupo.tipo_diferencia === "positiva" ? <label className="mt-2 flex items-center gap-2 rounded-md border border-green-400/20 bg-green-950/20 px-3 py-2 text-sm"><input type="checkbox" checked={grupo.ingreso_adicional} onChange={(event) => actualizarGrupo(grupo.id, { ingreso_adicional: event.target.checked })} />Registrar luego como ingreso adicional</label> : null}
               {grupo.observacion ? <p className="mt-2 rounded-md border border-antiguo/10 bg-espresso p-2 text-xs text-antiguo/70">{grupo.observacion}</p> : null}
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button type="button" onClick={() => aprobarGrupo(grupo)} disabled={capturaConfirmada || Boolean(grupo.pedido_id)} className="tap-target rounded-md bg-white px-3 text-xs font-black text-carbon disabled:opacity-50">Aprobar venta</button>
+                <button type="button" onClick={() => marcarGrupoRevision(grupo.id)} disabled={capturaConfirmada || Boolean(grupo.pedido_id)} className="tap-target rounded-md border border-white/35 px-3 text-xs font-bold text-white disabled:opacity-50">Marcar para revisar</button>
+              </div>
+
 
               <section className="mt-4 space-y-2">
                 <div className="flex items-center justify-between gap-2"><p className="text-sm font-bold text-dorado">Productos</p><button type="button" onClick={() => agregarLinea(grupo)} className="tap-target rounded-md border border-antiguo/20 px-3 text-xs font-bold">Agregar item</button></div>
@@ -767,6 +938,9 @@ export function CapturasVentaPanel() {
                   </div>
                   <span className="rounded-md border border-antiguo/15 px-3 py-2 text-center text-xs font-bold text-antiguo/80">{expandida ? "Ocultar" : "Ver items"}</span>
                 </button>
+                <div className="border-t border-antiguo/10 px-3 py-2">
+                  <button type="button" onClick={() => void eliminarCapturaHistorial(item.captura.id)} disabled={eliminando === item.captura.id} className="tap-target rounded-md border border-red-300/40 px-3 text-xs font-bold text-red-100 disabled:opacity-50">{eliminando === item.captura.id ? "Eliminando..." : "Eliminar captura"}</button>
+                </div>
 
                 {expandida ? (
                   <div className="border-t border-antiguo/10 p-3">
@@ -780,7 +954,10 @@ export function CapturasVentaPanel() {
                               <p className="text-sm text-antiguo/70">{grupo.texto_original ?? "Sin texto"}</p>
                               {grupo.pedido_id ? <p className="mt-1 text-xs font-bold text-green-100">Pedido confirmado</p> : null}
                             </div>
-                            <div className={`rounded-md border px-3 py-2 text-sm font-bold ${diferenciaClass(grupo.tipo_diferencia)}`}>Diferencia {formatoCOP(grupo.diferencia)}</div>
+                            <div className="flex flex-col gap-2 sm:items-end">
+                              <div className={`rounded-md border px-3 py-2 text-sm font-bold ${diferenciaClass(grupo.tipo_diferencia)}`}>Diferencia {formatoCOP(grupo.diferencia)}</div>
+                              <button type="button" onClick={() => void eliminarVentaHistorial(grupo)} disabled={eliminando === grupo.id} className="tap-target rounded-md border border-red-300/40 px-3 text-xs font-bold text-red-100 disabled:opacity-50">{eliminando === grupo.id ? "Eliminando..." : "Eliminar venta"}</button>
+                            </div>
                           </div>
                           <div className="mt-3 grid gap-3 lg:grid-cols-2">
                             <div className="space-y-2">
