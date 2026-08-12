@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { CapturasAprobacionAdminPanel } from "@/components/admin/capturas-aprobacion-admin";
 import { CatalogoStockAdminPanel } from "@/components/admin/catalogo-stock-admin";
 import { InventarioAdminPanel } from "@/components/admin/inventario-admin";
 import { MesasAdminPanel } from "@/components/admin/mesas-admin";
@@ -11,10 +12,11 @@ import type { Perfil } from "@/lib/roles";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 
 type Estado = "idle" | "cargando" | "guardando";
-type ModuloAdmin = "metricas" | "catalogo" | "auditoria" | "mesas" | "usuarios";
+type ModuloAdmin = "metricas" | "solicitudes" | "catalogo" | "auditoria" | "mesas" | "usuarios";
 
 const modulosAdmin: { id: ModuloAdmin; titulo: string; detalle: string }[] = [
   { id: "metricas", titulo: "Metricas", detalle: "Ventas, margen y caja" },
+  { id: "solicitudes", titulo: "Solicitudes", detalle: "Aprobacion de capturas" },
   { id: "catalogo", titulo: "Catalogo y stock", detalle: "Productos, compras y combos" },
   { id: "auditoria", titulo: "Auditoria", detalle: "Conteos y diferencias" },
   { id: "mesas", titulo: "Mesas", detalle: "Cantidad visible en pedidos" },
@@ -218,6 +220,7 @@ export function MeserosAdmin() {
           {mensaje ? <p className="mb-4 rounded-md border border-antiguo/15 bg-espresso p-3 text-sm font-semibold shadow-suave">{mensaje}</p> : null}
 
           {moduloActivo === "metricas" ? <MetricasAdminPanel /> : null}
+          {moduloActivo === "solicitudes" ? <CapturasAprobacionAdminPanel /> : null}
           {moduloActivo === "catalogo" ? <CatalogoStockAdminPanel /> : null}
           {moduloActivo === "auditoria" ? <InventarioAdminPanel vista="auditoria" /> : null}
           {moduloActivo === "mesas" ? <MesasAdminPanel /> : null}

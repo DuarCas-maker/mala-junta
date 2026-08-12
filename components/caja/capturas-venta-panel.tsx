@@ -26,6 +26,9 @@ type CapturaVenta = {
   modelo_ia: string | null;
   advertencias: string[] | null;
   created_at: string;
+  fecha_venta?: string | null;
+  enviado_aprobacion_at?: string | null;
+  aprobado_at?: string | null;
   confirmado_at?: string | null;
 };
 
@@ -82,6 +85,8 @@ type GrupoRevision = {
   observacion: string | null;
   aprobado?: boolean;
   aprobado_at?: string | null;
+  estado?: string | null;
+  enviado_aprobacion_at?: string | null;
   confirmado_at?: string | null;
   confirmado_por?: string | null;
   lineas: LineaRevision[];
@@ -193,6 +198,49 @@ function fechaCorta(fecha?: string | null) {
   return new Date(fecha).toLocaleString("es-CO", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
+function fechaInputHoy() {
+  const partes = new Intl.DateTimeFormat("es-CO", {
+    timeZone: "America/Bogota",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const valor = (tipo: Intl.DateTimeFormatPartTypes) => partes.find((parte) => parte.type === tipo)?.value ?? "";
+  return `${valor("year")}-${valor("month")}-${valor("day")}`;
+}
+
+function capturaNoEditableCaja(estado?: string | null) {
+  return ["pendiente_aprobacion", "aprobada_parcial", "confirmada", "eliminada", "rechazada"].includes(estado ?? "");
+}
+
+function capturaEnAprobacion(estado?: string | null) {
+  return ["pendiente_aprobacion", "aprobada_parcial"].includes(estado ?? "");
+}
+
+function capturaEliminableCaja(captura: CapturaVenta) {
+  return !capturaNoEditableCaja(captura.estado) && !captura.enviado_aprobacion_at && !captura.aprobado_at && !captura.confirmado_at;
+}
+
+function ventaEliminableCaja(captura: CapturaVenta, grupo: GrupoRevision) {
+  return capturaEliminableCaja(captura) && !grupo.pedido_id && grupo.estado !== "confirmada";
+}
+
+function estadoCapturaCaja(captura: CapturaVenta) {
+  if (captura.estado === "confirmada" || captura.confirmado_at) return { texto: "Aplicada", clase: "border-green-300/40 bg-green-950/25 text-green-100", detalle: "Ya desconto inventario y cuenta para metricas." };
+  if (captura.estado === "aprobada_parcial") return { texto: "Aplicada parcial", clase: "border-green-300/30 bg-green-950/20 text-green-100", detalle: "Algunas ventas ya fueron aprobadas por admin." };
+  if (captura.estado === "pendiente_aprobacion" || captura.enviado_aprobacion_at) return { texto: "Pendiente admin", clase: "border-blue-200/50 bg-blue-950/25 text-blue-100", detalle: "Caja ya no puede editarla ni eliminarla." };
+  if (captura.estado === "eliminada" || captura.estado === "rechazada") return { texto: "Eliminada", clase: "border-red-300/35 bg-red-950/25 text-red-100", detalle: "No cuenta para inventario ni metricas." };
+  if (captura.estado === "procesada") return { texto: "Borrador listo", clase: "border-white/50 bg-white/10 text-white", detalle: "Falta enviarla a aprobacion admin." };
+  return { texto: "Requiere revision", clase: "border-oro/40 bg-oro/10 text-dorado", detalle: "Completa datos antes de enviarla." };
+}
+
+function estadoGrupoHistorialCaja(grupo: GrupoRevision) {
+  if (grupo.pedido_id || grupo.estado === "confirmada") return { texto: "Aplicada", clase: "text-green-100" };
+  if (grupo.estado === "pendiente_aprobacion" || grupo.estado === "aprobada") return { texto: "Pendiente admin", clase: "text-blue-100" };
+  if (grupo.aprobado && !grupo.requiere_revision) return { texto: "Lista para enviar", clase: "text-white" };
+  return { texto: "Requiere revision", clase: "text-dorado" };
+}
+
 function totalPagosGrupo(grupo: GrupoRevision) {
   return grupo.pagos.reduce((sum, pago) => sum + Number(pago.monto ?? 0), 0);
 }
@@ -215,10 +263,10 @@ function problemasGrupo(grupo: GrupoRevision) {
 
 function estadoVenta(grupo: GrupoRevision) {
   if (grupo.pedido_id) return { texto: "Confirmada", clase: "border-green-300/40 bg-green-950/30 text-green-100" };
-  if (grupo.aprobado && !grupo.requiere_revision) return { texto: "Aprobada", clase: "border-blue-200/50 bg-blue-950/25 text-blue-100" };
+  if (grupo.estado === "pendiente_aprobacion") return { texto: "Enviada a admin", clase: "border-blue-200/50 bg-blue-950/25 text-blue-100" };
+  if (grupo.aprobado && !grupo.requiere_revision) return { texto: "Lista para enviar", clase: "border-blue-200/50 bg-blue-950/25 text-blue-100" };
   return { texto: "Requiere revision", clase: "border-white bg-white/10 text-white" };
 }
-
 export function CapturasVentaPanel() {
   const [catalogo, setCatalogo] = useState<ItemCatalogo[]>([]);
   const [foto, setFoto] = useState<File | null>(null);
@@ -227,7 +275,8 @@ export function CapturasVentaPanel() {
   const [mensaje, setMensaje] = useState<string | null>(null);
   const [procesando, setProcesando] = useState(false);
   const [guardando, setGuardando] = useState(false);
-  const [confirmando, setConfirmando] = useState(false);
+  const [enviandoAprobacion, setEnviandoAprobacion] = useState(false);
+  const [fechaVenta, setFechaVenta] = useState(fechaInputHoy);
   const [eliminando, setEliminando] = useState<string | null>(null);
   const [historial, setHistorial] = useState<CapturaHistorial[]>([]);
   const [historialCargando, setHistorialCargando] = useState(false);
@@ -243,7 +292,7 @@ export function CapturasVentaPanel() {
       const supabase = supabaseBrowser();
       const { data: capturas, error } = await supabase
         .from("capturas_venta")
-        .select("id,estado,storage_bucket,storage_path,nombre_archivo,modelo_ia,advertencias,created_at,confirmado_at")
+        .select("id,estado,storage_bucket,storage_path,nombre_archivo,modelo_ia,advertencias,created_at,fecha_venta,enviado_aprobacion_at,aprobado_at,confirmado_at")
         .order("created_at", { ascending: false })
         .limit(12);
 
@@ -497,10 +546,10 @@ export function CapturasVentaPanel() {
     actualizarGrupo(grupoId, { requiere_revision: true, aprobado: false, aprobado_at: null });
   }
 
-  function aprobarGrupo(grupo: GrupoRevision) {
+  function marcarGrupoLista(grupo: GrupoRevision) {
     const problemas = problemasGrupo(grupo);
     if (problemas.length > 0) {
-      setMensaje(`Venta ${grupo.orden} no se puede aprobar: ${problemas.join(", ")}.`);
+      setMensaje(`Venta ${grupo.orden} no se puede marcar lista: ${problemas.join(", ")}.`);
       return;
     }
 
@@ -523,13 +572,13 @@ export function CapturasVentaPanel() {
         }),
       };
     });
-    setMensaje(`Venta ${grupo.orden} aprobada. Guarda la revision antes de confirmar.`);
+    setMensaje(`Venta ${grupo.orden} lista. Guarda la revision antes de enviarla a aprobacion.`);
   }
 
   async function agregarVenta() {
     if (!resultado) return;
-    if (resultado.captura.estado === "confirmada") {
-      setMensaje("Esta captura ya fue confirmada y no permite agregar ventas.");
+    if (capturaNoEditableCaja(resultado.captura.estado)) {
+      setMensaje("Esta captura ya fue enviada o confirmada y no permite agregar ventas desde caja.");
       return;
     }
 
@@ -557,7 +606,7 @@ export function CapturasVentaPanel() {
 
       const recargado = await recargarResultado(supabase, resultado.captura.id);
       setResultado({ ...resultado, grupos: recargado });
-      setMensaje(`Venta ${orden} agregada. Completa items, pagos y apruebala.`);
+      setMensaje(`Venta ${orden} agregada. Completa items, pagos y marcala lista.`);
       await cargarHistorial();
     } catch (err) {
       setMensaje(err instanceof Error ? err.message : "No se pudo agregar la venta.");
@@ -597,6 +646,7 @@ export function CapturasVentaPanel() {
       if (!response.ok) throw new Error(data.error ?? "No se pudo procesar la foto.");
 
       setResultado(data as RespuestaProceso);
+      setFechaVenta((data as RespuestaProceso).captura.fecha_venta ?? fechaInputHoy());
       setMensaje("Lectura lista por ventas. Todavia no se registra una venta real.");
       void cargarHistorial();
     } catch (err) {
@@ -608,8 +658,8 @@ export function CapturasVentaPanel() {
 
   async function guardarRevision(options: { silencioso?: boolean } = {}) {
     if (!resultado) return false;
-    if (resultado.captura.estado === "confirmada") {
-      setMensaje("Esta captura ya fue confirmada y no se puede volver a guardar.");
+    if (capturaNoEditableCaja(resultado.captura.estado)) {
+      setMensaje("Esta captura ya fue enviada a aprobacion o confirmada y no se puede volver a guardar desde caja.");
       return false;
     }
     setMensaje(null);
@@ -665,7 +715,7 @@ export function CapturasVentaPanel() {
       });
       setLineasEliminadas([]);
       setPagosEliminados([]);
-      if (!options.silencioso) setMensaje("Revision guardada. Ya puedes confirmar para descontar inventario.");
+      if (!options.silencioso) setMensaje("Revision guardada. Ya puedes enviarla a aprobacion admin.");
       void cargarHistorial();
       return true;
     } catch (err) {
@@ -676,13 +726,18 @@ export function CapturasVentaPanel() {
     }
   }
 
-  async function confirmarCaptura() {
+  async function enviarAprobacion() {
     if (!resultado) return;
 
+    if (!fechaVenta) {
+      setMensaje("Selecciona la fecha de venta antes de enviar a aprobacion.");
+      return;
+    }
+
     const grupos = resultado.grupos.map(recalcularGrupo);
-    const pendientes = grupos.filter((grupo) => grupo.requiere_revision).length;
+    const pendientes = grupos.filter((grupo) => grupo.requiere_revision || !grupo.aprobado).length;
     if (pendientes > 0) {
-      setMensaje(`Hay ${pendientes} venta(s) pendientes por revisar antes de descontar inventario.`);
+      setMensaje(`Hay ${pendientes} venta(s) pendientes por revisar o marcar listas antes de enviar a aprobacion.`);
       return;
     }
 
@@ -691,7 +746,7 @@ export function CapturasVentaPanel() {
       return;
     }
 
-    setConfirmando(true);
+    setEnviandoAprobacion(true);
     setMensaje(null);
 
     try {
@@ -699,24 +754,25 @@ export function CapturasVentaPanel() {
       if (!revisionGuardada) return;
 
       const supabase = supabaseBrowser();
-      const { data, error } = await supabase.rpc("confirmar_captura_venta", { p_captura_id: resultado.captura.id });
+      const { data, error } = await supabase.rpc("enviar_captura_aprobacion", {
+        p_captura_id: resultado.captura.id,
+        p_fecha_venta: fechaVenta,
+      });
       if (error) throw new Error(error.message);
 
       const recargado = await recargarResultado(supabase, resultado.captura.id);
-      const ventasConfirmadas = Number((data as { ventas_confirmadas?: number } | null)?.ventas_confirmadas ?? recargado.length);
       setResultado({
-        captura: { ...resultado.captura, estado: "confirmada", confirmado_at: new Date().toISOString() },
+        captura: { ...resultado.captura, ...(data as CapturaVenta), estado: "pendiente_aprobacion", fecha_venta: fechaVenta },
         grupos: recargado,
       });
-      setMensaje(`Captura confirmada. Se registraron ${ventasConfirmadas} venta(s) y se desconto inventario.`);
+      setMensaje("Captura enviada a aprobacion admin. Todavia no descuenta inventario ni registra ventas reales.");
       await cargarHistorial();
     } catch (err) {
-      setMensaje(err instanceof Error ? err.message : "No se pudo confirmar la captura.");
+      setMensaje(err instanceof Error ? err.message : "No se pudo enviar la captura a aprobacion.");
     } finally {
-      setConfirmando(false);
+      setEnviandoAprobacion(false);
     }
   }
-
   async function refrescarResultadoActual(capturaId: string, capturaEliminada = false) {
     await cargarHistorial();
     if (resultado?.captura.id !== capturaId) return;
@@ -728,25 +784,30 @@ export function CapturasVentaPanel() {
 
     const supabase = supabaseBrowser();
     const [{ data: captura, error: capturaError }, grupos] = await Promise.all([
-      supabase.from("capturas_venta").select("id,estado,storage_bucket,storage_path,nombre_archivo,modelo_ia,advertencias,created_at,confirmado_at").eq("id", capturaId).maybeSingle(),
+      supabase.from("capturas_venta").select("id,estado,storage_bucket,storage_path,nombre_archivo,modelo_ia,advertencias,created_at,fecha_venta,enviado_aprobacion_at,aprobado_at,confirmado_at").eq("id", capturaId).maybeSingle(),
       recargarResultado(supabase, capturaId),
     ]);
     if (capturaError) throw new Error(capturaError.message);
+    if (captura?.fecha_venta) setFechaVenta(captura.fecha_venta);
     setResultado((actual) => actual ? { captura: { ...actual.captura, ...(captura ?? {}) }, grupos } : actual);
   }
 
-  async function eliminarCapturaHistorial(capturaId: string) {
-    if (!window.confirm("Eliminar esta captura anulara sus pedidos/pagos confirmados y devolvera inventario. Continuar?")) return;
+  async function eliminarCapturaHistorial(captura: CapturaVenta) {
+    if (!capturaEliminableCaja(captura)) {
+      setMensaje("Esta captura ya fue enviada a admin o aplicada. Solo admin puede eliminarla desde Solicitudes.");
+      return;
+    }
+    if (!window.confirm("Eliminar este borrador de captura? No hay ventas aplicadas ni inventario descontado.")) return;
 
-    setEliminando(capturaId);
+    setEliminando(captura.id);
     setMensaje(null);
     try {
       const supabase = supabaseBrowser();
-      const { data, error } = await supabase.rpc("eliminar_captura_venta", { p_captura_id: capturaId });
+      const { data, error } = await supabase.rpc("eliminar_captura_venta", { p_captura_id: captura.id });
       if (error) throw new Error(error.message);
       const ventas = Number((data as { ventas_eliminadas?: number } | null)?.ventas_eliminadas ?? 0);
-      setMensaje(`Captura eliminada. Se anularon ${ventas} venta(s) y se devolvio inventario cuando aplicaba.`);
-      await refrescarResultadoActual(capturaId, true);
+      setMensaje(`Captura eliminada. Se quitaron ${ventas} venta(s) del borrador.`);
+      await refrescarResultadoActual(captura.id, true);
     } catch (err) {
       setMensaje(err instanceof Error ? err.message : "No se pudo eliminar la captura.");
     } finally {
@@ -754,8 +815,12 @@ export function CapturasVentaPanel() {
     }
   }
 
-  async function eliminarVentaHistorial(grupo: GrupoRevision) {
-    if (!window.confirm(`Eliminar venta ${grupo.orden} anulara su pedido/pagos si ya estaba confirmada. Continuar?`)) return;
+  async function eliminarVentaHistorial(captura: CapturaVenta, grupo: GrupoRevision) {
+    if (!ventaEliminableCaja(captura, grupo)) {
+      setMensaje("Esta venta ya fue enviada a admin o aplicada. Solo admin puede eliminarla desde Solicitudes.");
+      return;
+    }
+    if (!window.confirm(`Eliminar venta ${grupo.orden} del borrador?`)) return;
 
     setEliminando(grupo.id);
     setMensaje(null);
@@ -764,7 +829,7 @@ export function CapturasVentaPanel() {
       const { data, error } = await supabase.rpc("eliminar_venta_captura", { p_grupo_id: grupo.id });
       if (error) throw new Error(error.message);
       const capturaEliminada = Boolean((data as { captura_eliminada?: boolean } | null)?.captura_eliminada);
-      setMensaje(`Venta ${grupo.orden} eliminada. Si estaba confirmada, se anulo y devolvio inventario.`);
+      setMensaje(`Venta ${grupo.orden} eliminada del borrador.`);
       await refrescarResultadoActual(grupo.captura_id, capturaEliminada);
     } catch (err) {
       setMensaje(err instanceof Error ? err.message : "No se pudo eliminar la venta.");
@@ -773,8 +838,9 @@ export function CapturasVentaPanel() {
     }
   }
 
-  const capturaConfirmada = resultado?.captura.estado === "confirmada";
-  const puedeConfirmar = Boolean(resultado && resultado.grupos.length > 0 && resumen.pendientesRevision === 0 && resumen.confirmadas === 0 && !capturaConfirmada);
+  const capturaCerradaCaja = capturaNoEditableCaja(resultado?.captura.estado);
+  const capturaPendienteAdmin = capturaEnAprobacion(resultado?.captura.estado);
+  const puedeEnviarAprobacion = Boolean(resultado && resultado.grupos.length > 0 && resumen.pendientesRevision === 0 && resumen.confirmadas === 0 && !capturaCerradaCaja && fechaVenta);
 
   return (
     <section className="rounded-lg border border-antiguo/15 bg-espresso p-3 shadow-suave sm:p-4">
@@ -826,7 +892,11 @@ export function CapturasVentaPanel() {
               <p>Faltante: <strong className="text-red-100">{formatoCOP(resumen.faltante)}</strong></p>
               <p>Positivo: <strong className="text-green-100">{formatoCOP(resumen.positivo)}</strong></p>
             </div>
-            <button type="button" onClick={() => void agregarVenta()} disabled={guardando || confirmando || capturaConfirmada} className="tap-target mt-3 rounded-md border border-white/40 px-4 text-sm font-black text-white disabled:opacity-50">Agregar venta</button>
+            <div className="mt-3 grid gap-2 sm:grid-cols-[220px_auto] sm:items-end">
+              <label className="text-xs font-bold text-antiguo/80">Fecha de venta<input type="date" value={fechaVenta} onChange={(event) => setFechaVenta(event.target.value)} disabled={capturaCerradaCaja} className="tap-target mt-1 w-full rounded-md border border-antiguo/20 bg-espresso px-3 text-crema disabled:opacity-60" /></label>
+              <button type="button" onClick={() => void agregarVenta()} disabled={guardando || enviandoAprobacion || capturaCerradaCaja} className="tap-target rounded-md border border-white/40 px-4 text-sm font-black text-white disabled:opacity-50">Agregar venta</button>
+            </div>
+            {capturaPendienteAdmin ? <p className="mt-3 rounded-md border border-blue-200/25 bg-blue-950/20 p-2 text-xs font-bold text-blue-100">Esta captura ya fue enviada a aprobacion admin.</p> : null}
           </div>
 
           {resultado.grupos.map((grupo) => (
@@ -843,47 +913,47 @@ export function CapturasVentaPanel() {
               </div>
 
               <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                <label className="text-xs font-bold text-antiguo/80">Total leido<input type="number" min="0" inputMode="numeric" value={grupo.total_leido} onChange={(event) => actualizarGrupo(grupo.id, { total_leido: Number(event.target.value) })} className="tap-target mt-1 w-full rounded-md border border-antiguo/20 bg-espresso px-3 text-crema" /></label>
+                <label className="text-xs font-bold text-antiguo/80">Total leido<input type="number" min="0" inputMode="numeric" value={grupo.total_leido} onChange={(event) => actualizarGrupo(grupo.id, { total_leido: Number(event.target.value) })} disabled={capturaCerradaCaja} className="tap-target mt-1 w-full rounded-md border border-antiguo/20 bg-espresso px-3 text-crema disabled:opacity-60" /></label>
                 <div className="rounded-md border border-antiguo/10 bg-espresso p-3 text-sm"><p className="text-antiguo/60">Esperado catalogo</p><p className="font-black text-dorado">{formatoCOP(grupo.total_esperado)}</p></div>
                 <div className="rounded-md border border-antiguo/10 bg-espresso p-3 text-sm"><p className="text-antiguo/60">Estado</p><p className={`mt-1 inline-flex rounded-md border px-2 py-1 text-xs font-black ${estadoVenta(grupo).clase}`}>{estadoVenta(grupo).texto}</p></div>
               </div>
 
-              {grupo.tipo_diferencia === "negativa" ? <label className="mt-2 flex items-center gap-2 rounded-md border border-red-400/20 bg-red-950/20 px-3 py-2 text-sm"><input type="checkbox" checked={grupo.descuento_autorizado} onChange={(event) => actualizarGrupo(grupo.id, { descuento_autorizado: event.target.checked })} />Descuento/faltante autorizado</label> : null}
-              {grupo.tipo_diferencia === "positiva" ? <label className="mt-2 flex items-center gap-2 rounded-md border border-green-400/20 bg-green-950/20 px-3 py-2 text-sm"><input type="checkbox" checked={grupo.ingreso_adicional} onChange={(event) => actualizarGrupo(grupo.id, { ingreso_adicional: event.target.checked })} />Registrar luego como ingreso adicional</label> : null}
+              {grupo.tipo_diferencia === "negativa" ? <label className="mt-2 flex items-center gap-2 rounded-md border border-red-400/20 bg-red-950/20 px-3 py-2 text-sm"><input type="checkbox" checked={grupo.descuento_autorizado} onChange={(event) => actualizarGrupo(grupo.id, { descuento_autorizado: event.target.checked })} disabled={capturaCerradaCaja} />Descuento/faltante autorizado</label> : null}
+              {grupo.tipo_diferencia === "positiva" ? <label className="mt-2 flex items-center gap-2 rounded-md border border-green-400/20 bg-green-950/20 px-3 py-2 text-sm"><input type="checkbox" checked={grupo.ingreso_adicional} onChange={(event) => actualizarGrupo(grupo.id, { ingreso_adicional: event.target.checked })} disabled={capturaCerradaCaja} />Registrar luego como ingreso adicional</label> : null}
               {grupo.observacion ? <p className="mt-2 rounded-md border border-antiguo/10 bg-espresso p-2 text-xs text-antiguo/70">{grupo.observacion}</p> : null}
 
               <div className="mt-3 flex flex-wrap gap-2">
-                <button type="button" onClick={() => aprobarGrupo(grupo)} disabled={capturaConfirmada || Boolean(grupo.pedido_id)} className="tap-target rounded-md bg-white px-3 text-xs font-black text-carbon disabled:opacity-50">Aprobar venta</button>
-                <button type="button" onClick={() => marcarGrupoRevision(grupo.id)} disabled={capturaConfirmada || Boolean(grupo.pedido_id)} className="tap-target rounded-md border border-white/35 px-3 text-xs font-bold text-white disabled:opacity-50">Marcar para revisar</button>
+                <button type="button" onClick={() => marcarGrupoLista(grupo)} disabled={capturaCerradaCaja || Boolean(grupo.pedido_id)} className="tap-target rounded-md bg-white px-3 text-xs font-black text-carbon disabled:opacity-50">Marcar lista</button>
+                <button type="button" onClick={() => marcarGrupoRevision(grupo.id)} disabled={capturaCerradaCaja || Boolean(grupo.pedido_id)} className="tap-target rounded-md border border-white/35 px-3 text-xs font-bold text-white disabled:opacity-50">Marcar para revisar</button>
               </div>
 
 
               <section className="mt-4 space-y-2">
-                <div className="flex items-center justify-between gap-2"><p className="text-sm font-bold text-dorado">Productos</p><button type="button" onClick={() => agregarLinea(grupo)} className="tap-target rounded-md border border-antiguo/20 px-3 text-xs font-bold">Agregar item</button></div>
+                <div className="flex items-center justify-between gap-2"><p className="text-sm font-bold text-dorado">Productos</p><button type="button" onClick={() => agregarLinea(grupo)} disabled={capturaCerradaCaja} className="tap-target rounded-md border border-antiguo/20 px-3 text-xs font-bold disabled:opacity-50">Agregar item</button></div>
                 {grupo.lineas.map((linea) => (
                   <div key={linea.id} className="rounded-md border border-antiguo/10 bg-espresso p-3">
                     <p className="text-xs text-antiguo/60">Leido: {linea.texto_original ?? linea.item_nombre_detectado ?? "-"} / match {porcentaje(linea.puntaje_match)}</p>
                     <div className="mt-2 grid gap-2 lg:grid-cols-[1.4fr_80px_110px_110px_auto]">
-                      <select value={valorItem(linea)} onChange={(event) => seleccionarItem(grupo.id, linea, event.target.value)} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema"><option value="">Sin match - {nombreDetectado(linea)}</option>{catalogo.map((item) => <option key={item.clave} value={item.clave}>{item.tipo === "combo" ? "Combo - " : ""}{item.nombre}</option>)}</select>
-                      <input type="number" min="1" inputMode="numeric" value={linea.cantidad} onChange={(event) => actualizarLinea(grupo.id, linea.id, { cantidad: Number(event.target.value) })} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
-                      <input type="number" min="0" inputMode="numeric" value={linea.precio_catalogo} onChange={(event) => actualizarLinea(grupo.id, linea.id, { precio_catalogo: Number(event.target.value), requiere_revision: true })} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
+                      <select value={valorItem(linea)} onChange={(event) => seleccionarItem(grupo.id, linea, event.target.value)} disabled={capturaCerradaCaja} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema disabled:opacity-60"><option value="">Sin match - {nombreDetectado(linea)}</option>{catalogo.map((item) => <option key={item.clave} value={item.clave}>{item.tipo === "combo" ? "Combo - " : ""}{item.nombre}</option>)}</select>
+                      <input type="number" min="1" inputMode="numeric" value={linea.cantidad} onChange={(event) => actualizarLinea(grupo.id, linea.id, { cantidad: Number(event.target.value) })} disabled={capturaCerradaCaja} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema disabled:opacity-60" />
+                      <input type="number" min="0" inputMode="numeric" value={linea.precio_catalogo} onChange={(event) => actualizarLinea(grupo.id, linea.id, { precio_catalogo: Number(event.target.value), requiere_revision: true })} disabled={capturaCerradaCaja} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema disabled:opacity-60" />
                       <p className="rounded-md border border-antiguo/10 bg-carbon px-3 py-3 text-sm font-bold text-dorado">{formatoCOP(linea.subtotal_esperado)}</p>
-                      <button type="button" onClick={() => quitarLinea(grupo.id, linea)} className="tap-target rounded-md border border-red-300/30 px-3 text-xs font-bold text-red-100">Quitar</button>
+                      <button type="button" onClick={() => quitarLinea(grupo.id, linea)} disabled={capturaCerradaCaja} className="tap-target rounded-md border border-red-300/30 px-3 text-xs font-bold text-red-100 disabled:opacity-50">Quitar</button>
                     </div>
                   </div>
                 ))}
               </section>
 
               <section className="mt-4 space-y-2">
-                <div className="flex items-center justify-between gap-2"><p className="text-sm font-bold text-dorado">Pagos</p><button type="button" onClick={() => agregarPago(grupo)} className="tap-target rounded-md border border-antiguo/20 px-3 text-xs font-bold">Agregar pago</button></div>
+                <div className="flex items-center justify-between gap-2"><p className="text-sm font-bold text-dorado">Pagos</p><button type="button" onClick={() => agregarPago(grupo)} disabled={capturaCerradaCaja} className="tap-target rounded-md border border-antiguo/20 px-3 text-xs font-bold disabled:opacity-50">Agregar pago</button></div>
                 {grupo.pagos.map((pago) => (
                   <div key={pago.id} className="rounded-md border border-antiguo/10 bg-espresso p-3">
                     <p className="text-xs text-antiguo/60">Leido: {pago.medio_detectado ?? nombreMedio(pago.medio_normalizado)} / confianza {porcentaje(pago.confianza_ia)}</p>
                     <div className="mt-2 grid gap-2 lg:grid-cols-[1fr_130px_130px_auto]">
-                      <select value={pago.medio_normalizado ?? ""} onChange={(event) => { const medio = event.target.value as MedioPago | ""; actualizarPago(grupo.id, pago.id, { medio_normalizado: medio || null, requiere_revision: !medio }); }} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema"><option value="">Medio por revisar</option>{mediosPago.map((medio) => <option key={medio.id} value={medio.id}>{medio.nombre}</option>)}</select>
-                      <input value={pago.cuenta_destino ?? ""} onChange={(event) => actualizarPago(grupo.id, pago.id, { cuenta_destino: event.target.value || null })} placeholder="Cuenta" className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema placeholder:text-antiguo/50" />
-                      <input type="number" min="0" inputMode="numeric" value={pago.monto} onChange={(event) => actualizarPago(grupo.id, pago.id, { monto: Number(event.target.value), requiere_revision: Number(event.target.value) <= 0 })} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
-                      <button type="button" onClick={() => quitarPago(grupo.id, pago)} className="tap-target rounded-md border border-red-300/30 px-3 text-xs font-bold text-red-100">Quitar</button>
+                      <select value={pago.medio_normalizado ?? ""} onChange={(event) => { const medio = event.target.value as MedioPago | ""; actualizarPago(grupo.id, pago.id, { medio_normalizado: medio || null, requiere_revision: !medio }); }} disabled={capturaCerradaCaja} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema disabled:opacity-60"><option value="">Medio por revisar</option>{mediosPago.map((medio) => <option key={medio.id} value={medio.id}>{medio.nombre}</option>)}</select>
+                      <input value={pago.cuenta_destino ?? ""} onChange={(event) => actualizarPago(grupo.id, pago.id, { cuenta_destino: event.target.value || null })} placeholder="Cuenta" disabled={capturaCerradaCaja} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema placeholder:text-antiguo/50 disabled:opacity-60" />
+                      <input type="number" min="0" inputMode="numeric" value={pago.monto} onChange={(event) => actualizarPago(grupo.id, pago.id, { monto: Number(event.target.value), requiere_revision: Number(event.target.value) <= 0 })} disabled={capturaCerradaCaja} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema disabled:opacity-60" />
+                      <button type="button" onClick={() => quitarPago(grupo.id, pago)} disabled={capturaCerradaCaja} className="tap-target rounded-md border border-red-300/30 px-3 text-xs font-bold text-red-100 disabled:opacity-50">Quitar</button>
                     </div>
                   </div>
                 ))}
@@ -894,10 +964,10 @@ export function CapturasVentaPanel() {
           {resultado.grupos.length === 0 ? <p className="rounded-md border border-antiguo/10 bg-carbon p-4 text-center text-sm text-antiguo/70">No se detectaron ventas.</p> : null}
 
           <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-center">
-            <p className="text-xs text-antiguo/60">Guarda la revision antes de confirmar. Confirmar crea ventas reales, registra pagos y descuenta inventario.</p>
+            <p className="text-xs text-antiguo/60">Guarda la revision y enviala a aprobacion admin. Caja no descuenta inventario desde esta pantalla.</p>
             <div className="grid gap-2 sm:grid-cols-2">
-              <button type="button" onClick={() => void guardarRevision()} disabled={guardando || confirmando || capturaConfirmada} className="tap-target rounded-md bg-oro px-4 text-sm font-black text-carbon disabled:opacity-50">{guardando ? "Guardando..." : "Guardar revision"}</button>
-              <button type="button" onClick={() => void confirmarCaptura()} disabled={!puedeConfirmar || guardando || confirmando} className="tap-target rounded-md bg-green-600 px-4 text-sm font-black text-white disabled:opacity-50">{confirmando ? "Confirmando..." : "Confirmar y descontar"}</button>
+              <button type="button" onClick={() => void guardarRevision()} disabled={guardando || enviandoAprobacion || capturaCerradaCaja} className="tap-target rounded-md bg-oro px-4 text-sm font-black text-carbon disabled:opacity-50">{guardando ? "Guardando..." : "Guardar revision"}</button>
+              <button type="button" onClick={() => void enviarAprobacion()} disabled={!puedeEnviarAprobacion || guardando || enviandoAprobacion || capturaPendienteAdmin} className="tap-target rounded-md bg-green-600 px-4 text-sm font-black text-white disabled:opacity-50">{enviandoAprobacion ? "Enviando..." : "Enviar a aprobacion"}</button>
             </div>
           </div>
         </div>
@@ -916,6 +986,8 @@ export function CapturasVentaPanel() {
           {historial.map((item) => {
             const resumenCaptura = resumenGrupos(item.grupos);
             const expandida = Boolean(historialExpandido[item.captura.id]);
+            const estadoCaptura = estadoCapturaCaja(item.captura);
+            const puedeEliminarCaptura = capturaEliminableCaja(item.captura);
             return (
               <article key={item.captura.id} className="rounded-md border border-antiguo/10 bg-espresso">
                 <button
@@ -927,8 +999,12 @@ export function CapturasVentaPanel() {
                     {item.imagen_url ? <Image src={item.imagen_url} alt="Captura subida" width={160} height={120} unoptimized className="h-full w-full object-cover" /> : <span className="text-xs text-antiguo/50">Sin imagen</span>}
                   </div>
                   <div>
-                    <p className="text-sm font-black text-crema">{fechaCorta(item.captura.created_at)} - {item.captura.estado}</p>
-                    <p className="mt-1 text-xs text-antiguo/60">{item.captura.nombre_archivo ?? "Imagen de venta"}</p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`rounded-md border px-2 py-1 text-xs font-black ${estadoCaptura.clase}`}>{estadoCaptura.texto}</span>
+                      <p className="text-sm font-black text-crema">Subida {fechaCorta(item.captura.created_at)}</p>
+                    </div>
+                    <p className="mt-1 text-xs text-antiguo/60">Venta {item.captura.fecha_venta ?? "sin fecha"} / {item.captura.nombre_archivo ?? "Imagen de venta"}</p>
+                    <p className="mt-1 text-xs font-bold text-antiguo/70">{estadoCaptura.detalle}</p>
                     <div className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
                       <span>Ventas: <strong className="text-dorado">{item.grupos.length}</strong></span>
                       <span>Leido: <strong className="text-dorado">{formatoCOP(resumenCaptura.totalLeido)}</strong></span>
@@ -938,25 +1014,34 @@ export function CapturasVentaPanel() {
                   </div>
                   <span className="rounded-md border border-antiguo/15 px-3 py-2 text-center text-xs font-bold text-antiguo/80">{expandida ? "Ocultar" : "Ver items"}</span>
                 </button>
-                <div className="border-t border-antiguo/10 px-3 py-2">
-                  <button type="button" onClick={() => void eliminarCapturaHistorial(item.captura.id)} disabled={eliminando === item.captura.id} className="tap-target rounded-md border border-red-300/40 px-3 text-xs font-bold text-red-100 disabled:opacity-50">{eliminando === item.captura.id ? "Eliminando..." : "Eliminar captura"}</button>
+                <div className="flex flex-col gap-2 border-t border-antiguo/10 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-xs text-antiguo/60">{puedeEliminarCaptura ? "Borrador editable por caja." : "Gestion de eliminacion/reversion reservada para admin."}</p>
+                  {puedeEliminarCaptura ? (
+                    <button type="button" onClick={() => void eliminarCapturaHistorial(item.captura)} disabled={eliminando === item.captura.id} className="tap-target rounded-md border border-red-300/40 px-3 text-xs font-bold text-red-100 disabled:opacity-50">{eliminando === item.captura.id ? "Eliminando..." : "Eliminar borrador"}</button>
+                  ) : null}
                 </div>
 
                 {expandida ? (
                   <div className="border-t border-antiguo/10 p-3">
                     {item.imagen_url ? <Image src={item.imagen_url} alt="Foto de la captura" width={900} height={700} unoptimized className="max-h-[520px] w-full rounded-md object-contain" /> : null}
                     <div className="mt-3 space-y-3">
-                      {item.grupos.map((grupo) => (
+                      {item.grupos.map((grupo) => {
+                        const estadoGrupo = estadoGrupoHistorialCaja(grupo);
+                        const puedeEliminarVenta = ventaEliminableCaja(item.captura, grupo);
+                        return (
                         <div key={grupo.id} className="rounded-md border border-antiguo/10 bg-carbon p-3">
                           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                             <div>
                               <p className="text-xs font-bold uppercase tracking-wide text-oro">Venta {grupo.orden}</p>
-                              <p className="text-sm text-antiguo/70">{grupo.texto_original ?? "Sin texto"}</p>
+                              <p className={`mt-1 text-xs font-black ${estadoGrupo.clase}`}>{estadoGrupo.texto}</p>
+                              <p className="mt-1 text-sm text-antiguo/70">{grupo.texto_original ?? "Sin texto"}</p>
                               {grupo.pedido_id ? <p className="mt-1 text-xs font-bold text-green-100">Pedido confirmado</p> : null}
                             </div>
                             <div className="flex flex-col gap-2 sm:items-end">
                               <div className={`rounded-md border px-3 py-2 text-sm font-bold ${diferenciaClass(grupo.tipo_diferencia)}`}>Diferencia {formatoCOP(grupo.diferencia)}</div>
-                              <button type="button" onClick={() => void eliminarVentaHistorial(grupo)} disabled={eliminando === grupo.id} className="tap-target rounded-md border border-red-300/40 px-3 text-xs font-bold text-red-100 disabled:opacity-50">{eliminando === grupo.id ? "Eliminando..." : "Eliminar venta"}</button>
+                              {puedeEliminarVenta ? (
+                                <button type="button" onClick={() => void eliminarVentaHistorial(item.captura, grupo)} disabled={eliminando === grupo.id} className="tap-target rounded-md border border-red-300/40 px-3 text-xs font-bold text-red-100 disabled:opacity-50">{eliminando === grupo.id ? "Eliminando..." : "Eliminar venta"}</button>
+                              ) : null}
                             </div>
                           </div>
                           <div className="mt-3 grid gap-3 lg:grid-cols-2">
@@ -981,7 +1066,8 @@ export function CapturasVentaPanel() {
                             </div>
                           </div>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 ) : null}

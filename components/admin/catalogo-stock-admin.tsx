@@ -56,6 +56,7 @@ type ResumenValorInventario = {
   margen_potencial: number;
   productos_sin_costo: number;
 };
+type CargaAdvertencia = { seccion: string; mensaje: string };
 type MovimientoDescuento = {
   id: string;
   timestamp: string;
@@ -176,6 +177,88 @@ function compararItemsStock(orden: OrdenStockAdmin) {
     return prioridad || a.orden_tipo - b.orden_tipo || a.nombre.localeCompare(b.nombre, "es");
   };
 }
+function mensajeErrorCarga(error: unknown) {
+  if (error && typeof error === "object" && "message" in error) {
+    const mensaje = (error as { message?: unknown }).message;
+    if (typeof mensaje === "string" && mensaje.trim()) return mensaje;
+  }
+
+  return "Error desconocido al cargar la seccion.";
+}
+
+function construirItemsStockFallback(productos: Producto[], combos: Combo[], categorias: Categoria[]): ItemStock[] {
+  const categoriaPorId = new Map(categorias.map((categoria) => [categoria.id, categoria.nombre]));
+  const productoPorId = new Map(productos.map((producto) => [producto.id, producto]));
+
+  const productosItems: ItemStock[] = productos.map((producto) => ({
+    orden_tipo: 1,
+    tipo_item: "producto",
+    item_id: producto.id,
+    nombre: producto.nombre,
+    categoria: producto.categoria_id ? categoriaPorId.get(producto.categoria_id) ?? null : null,
+    precio_venta: Number(producto.precio_venta ?? 0),
+    costo_estimado: Number(producto.costo_unitario_actual ?? 0),
+    stock_disponible: Number(producto.stock_actual ?? 0),
+    stock_minimo: Number(producto.stock_minimo ?? 0),
+    presentacion_compra: producto.presentacion_compra,
+    factor_compra: Number(producto.factor_compra ?? 1),
+    activo: producto.activo,
+    componentes: null,
+  }));
+
+  const combosItems: ItemStock[] = combos.map((combo) => {
+    const componentes = comboItems(combo).map((item) => {
+      const producto = productoPorId.get(item.producto_id);
+      return {
+        producto_id: item.producto_id,
+        producto: producto?.nombre ?? "Producto sin catalogo",
+        cantidad: item.cantidad,
+        stock_actual: Number(producto?.stock_actual ?? 0),
+      };
+    });
+    const stockDisponible = componentes.length > 0
+      ? Math.min(...componentes.map((item) => Math.floor(item.stock_actual / Math.max(item.cantidad, 1))))
+      : 0;
+    const costoEstimado = componentes.reduce((total, item) => {
+      const producto = productoPorId.get(item.producto_id);
+      return total + Number(producto?.costo_unitario_actual ?? 0) * item.cantidad;
+    }, 0);
+
+    return {
+      orden_tipo: 2,
+      tipo_item: "combo",
+      item_id: combo.id,
+      nombre: combo.nombre,
+      categoria: "Combo",
+      precio_venta: Number(combo.precio_venta ?? 0),
+      costo_estimado: costoEstimado,
+      stock_disponible: stockDisponible,
+      stock_minimo: null,
+      presentacion_compra: null,
+      factor_compra: null,
+      activo: combo.activo,
+      componentes,
+    };
+  });
+
+  return [...productosItems, ...combosItems];
+}
+
+function calcularResumenInventario(items: ItemStock[], productosActivos: number): ResumenValorInventario {
+  const productosFisicos = items.filter((item) => item.tipo_item === "producto" && item.activo);
+  const unidadesStock = productosFisicos.reduce((total, item) => total + Number(item.stock_disponible ?? 0), 0);
+  const valorCosto = productosFisicos.reduce((total, item) => total + Number(item.stock_disponible ?? 0) * Number(item.costo_estimado ?? 0), 0);
+  const valorVenta = productosFisicos.reduce((total, item) => total + Number(item.stock_disponible ?? 0) * Number(item.precio_venta ?? 0), 0);
+
+  return {
+    productos_activos: productosFisicos.length || productosActivos,
+    unidades_stock: unidadesStock,
+    valor_costo: valorCosto,
+    valor_venta: valorVenta,
+    margen_potencial: valorVenta - valorCosto,
+    productos_sin_costo: productosFisicos.filter((item) => Number(item.costo_estimado ?? 0) <= 0).length,
+  };
+}
 function proveedorAForm(proveedor: Proveedor): ProveedorForm {
   return {
     id: proveedor.id,
@@ -200,6 +283,7 @@ export function CatalogoStockAdminPanel() {
   const [movimientosDescuento, setMovimientosDescuento] = useState<MovimientoDescuento[]>([]);
   const [resumenInventario, setResumenInventario] = useState<ResumenValorInventario | null>(null);
   const [mensaje, setMensaje] = useState<string | null>(null);
+  const [advertenciasCarga, setAdvertenciasCarga] = useState<CargaAdvertencia[]>([]);
   const [guardando, setGuardando] = useState(false);
 
   const [categoriaNueva, setCategoriaNueva] = useState("");
@@ -238,22 +322,42 @@ export function CatalogoStockAdminPanel() {
       supabase.from("v_admin_resumen_valor_inventario").select("*").maybeSingle(),
     ]);
 
-    const errores = [productosRes.error, categoriasRes.error, proveedoresRes.error, motivosRes.error, combosRes.error, itemsStockRes.error, movimientosRes.error, resumenInventarioRes.error].filter(Boolean);
-    if (errores.length > 0) {
-      setMensaje(errores[0]?.message ?? "No se pudo cargar catalogo y stock.");
-      return;
+    const advertencias: CargaAdvertencia[] = [];
+    const productosData = productosRes.error ? [] : (productosRes.data ?? []) as Producto[];
+    const categoriasData = categoriasRes.error ? [] : (categoriasRes.data ?? []) as Categoria[];
+    const proveedoresData = proveedoresRes.error ? [] : (proveedoresRes.data ?? []) as Proveedor[];
+    const motivosData = motivosRes.error ? [] : (motivosRes.data ?? []) as Motivo[];
+    const combosData = combosRes.error ? [] : (combosRes.data ?? []) as unknown as Combo[];
+
+    if (productosRes.error) advertencias.push({ seccion: "Productos", mensaje: mensajeErrorCarga(productosRes.error) });
+    if (categoriasRes.error) advertencias.push({ seccion: "Categorias", mensaje: mensajeErrorCarga(categoriasRes.error) });
+    if (proveedoresRes.error) advertencias.push({ seccion: "Proveedores", mensaje: mensajeErrorCarga(proveedoresRes.error) });
+    if (motivosRes.error) advertencias.push({ seccion: "Motivos", mensaje: mensajeErrorCarga(motivosRes.error) });
+    if (combosRes.error) advertencias.push({ seccion: "Combos", mensaje: mensajeErrorCarga(combosRes.error) });
+    if (itemsStockRes.error) advertencias.push({ seccion: "Items y stock", mensaje: `${mensajeErrorCarga(itemsStockRes.error)} Se uso una reconstruccion temporal desde productos y combos.` });
+    if (movimientosRes.error) advertencias.push({ seccion: "Historial de descuentos", mensaje: mensajeErrorCarga(movimientosRes.error) });
+    if (resumenInventarioRes.error) advertencias.push({ seccion: "Resumen de inventario", mensaje: `${mensajeErrorCarga(resumenInventarioRes.error)} Se calcularon totales desde el stock cargado.` });
+
+    const itemsStockData = itemsStockRes.error
+      ? construirItemsStockFallback(productosData, combosData, categoriasData)
+      : (itemsStockRes.data ?? []) as ItemStock[];
+    const resumenData = resumenInventarioRes.error || !resumenInventarioRes.data
+      ? calcularResumenInventario(itemsStockData, productosData.filter((producto) => producto.activo).length)
+      : resumenInventarioRes.data as ResumenValorInventario;
+
+    setProductos(productosData);
+    setCategorias(categoriasData);
+    setProveedores(proveedoresData);
+    setMotivos(motivosData);
+    setCombos(combosData);
+    setItemsStock(itemsStockData);
+    setMovimientosDescuento(movimientosRes.error ? [] : (movimientosRes.data ?? []) as MovimientoDescuento[]);
+    setResumenInventario(resumenData);
+    setAdvertenciasCarga(advertencias);
+    if (advertencias.length > 0) {
+      setMensaje("Catalogo y stock cargo parcialmente. Revisa las advertencias de cada seccion.");
     }
-
-    setProductos((productosRes.data ?? []) as Producto[]);
-    setCategorias((categoriasRes.data ?? []) as Categoria[]);
-    setProveedores((proveedoresRes.data ?? []) as Proveedor[]);
-    setMotivos((motivosRes.data ?? []) as Motivo[]);
-    setCombos((combosRes.data ?? []) as unknown as Combo[]);
-    setItemsStock((itemsStockRes.data ?? []) as ItemStock[]);
-    setMovimientosDescuento((movimientosRes.data ?? []) as MovimientoDescuento[]);
-    setResumenInventario((resumenInventarioRes.data ?? null) as ResumenValorInventario | null);
   }, []);
-
   useEffect(() => {
     cargar();
   }, [cargar]);
@@ -582,6 +686,16 @@ export function CatalogoStockAdminPanel() {
       </div>
 
       {mensaje ? <p className="rounded-md border border-antiguo/15 bg-espresso p-3 text-sm font-semibold">{mensaje}</p> : null}
+      {advertenciasCarga.length > 0 ? (
+        <div className="rounded-lg border border-dorado/30 bg-dorado/10 p-3 text-sm text-crema">
+          <p className="font-black text-dorado">Algunas secciones no respondieron.</p>
+          <ul className="mt-2 grid gap-1 text-antiguo/80">
+            {advertenciasCarga.map((advertencia) => (
+              <li key={advertencia.seccion}><strong className="text-crema">{advertencia.seccion}:</strong> {advertencia.mensaje}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <div className="rounded-lg border border-antiguo/15 bg-espresso p-4 shadow-suave">
@@ -607,110 +721,6 @@ export function CatalogoStockAdminPanel() {
         </div>
       </section>
 
-      <div className="grid gap-4 xl:grid-cols-3">
-        <section className="rounded-lg border border-antiguo/15 bg-espresso p-4 shadow-suave">
-          <h3 className="text-lg font-black text-crema">Producto</h3>
-          <form onSubmit={crearCategoria} className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
-            <input value={categoriaNueva} onChange={(event) => setCategoriaNueva(event.target.value)} placeholder="Nueva categoria" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
-            <button disabled={guardando || categoriaNueva.length < 2} className="tap-target rounded-md border border-oro/30 px-3 font-bold text-dorado disabled:opacity-50">Crear</button>
-          </form>
-          <form onSubmit={(event) => guardarProducto(event)} className="mt-4 grid gap-2">
-            <input value={productoForm.nombre} onChange={(event) => setProductoForm((actual) => ({ ...actual, nombre: event.target.value }))} placeholder="Nombre" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
-            <select value={productoForm.categoriaId} onChange={(event) => setProductoForm((actual) => ({ ...actual, categoriaId: event.target.value }))} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
-              <option value="">Categoria</option>
-              {categorias.map((categoria) => <option key={categoria.id} value={categoria.id}>{categoria.nombre}</option>)}
-            </select>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <input value={productoForm.precio} onChange={(event) => setProductoForm((actual) => ({ ...actual, precio: event.target.value }))} type="number" placeholder="Precio venta" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
-              <input value={productoForm.costo} onChange={(event) => setProductoForm((actual) => ({ ...actual, costo: event.target.value }))} type="number" placeholder="Costo unidad" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <input value={productoForm.codigo} onChange={(event) => setProductoForm((actual) => ({ ...actual, codigo: event.target.value }))} placeholder="Codigo" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
-              <input value={productoForm.minimo} onChange={(event) => setProductoForm((actual) => ({ ...actual, minimo: event.target.value }))} type="number" placeholder="Stock minimo" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <input value={productoForm.presentacion} onChange={(event) => setProductoForm((actual) => ({ ...actual, presentacion: event.target.value }))} placeholder="Presentacion compra" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
-              <input value={productoForm.factor} onChange={(event) => setProductoForm((actual) => ({ ...actual, factor: event.target.value }))} type="number" min="1" placeholder="Factor" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
-            </div>
-            <label className="flex items-center gap-2 text-sm text-antiguo/80"><input checked={productoForm.activo} onChange={(event) => setProductoForm((actual) => ({ ...actual, activo: event.target.checked }))} type="checkbox" />Activo</label>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <button disabled={guardando || productoForm.nombre.length < 2} className="tap-target rounded-md bg-oro px-4 font-black text-carbon disabled:opacity-50">{productoForm.id ? "Actualizar producto" : "Guardar producto"}</button>
-              {productoForm.id ? <button type="button" onClick={() => setProductoForm(productoInicial)} className="tap-target rounded-md border border-antiguo/20 px-4 font-bold">Cancelar</button> : null}
-            </div>
-          </form>
-        </section>
-        <section className="rounded-lg border border-antiguo/15 bg-espresso p-4 shadow-suave">
-          <h3 className="text-lg font-black text-crema">Compra</h3>
-          <form onSubmit={registrarCompra} className="mt-3 grid gap-2">
-            <select value={compraProveedor} onChange={(event) => setCompraProveedor(event.target.value)} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
-              <option value="">Proveedor obligatorio</option>
-              {proveedoresActivos.map((proveedor) => <option key={proveedor.id} value={proveedor.id}>{proveedor.nombre}</option>)}
-            </select>
-            <select value={compraProducto} onChange={(event) => setCompraProducto(event.target.value)} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
-              <option value="">Producto</option>
-              {productosActivos.map((producto) => <option key={producto.id} value={producto.id}>{producto.nombre}</option>)}
-            </select>
-            <select value={compraModo} onChange={(event) => setCompraModo(event.target.value as "unidades" | "presentacion")} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
-              <option value="unidades">Unidades</option>
-              <option value="presentacion">Presentacion de compra</option>
-            </select>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <input value={compraCantidad} onChange={(event) => setCompraCantidad(event.target.value)} type="number" min="1" placeholder="Cantidad" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
-              <div className="rounded-md border border-antiguo/20 bg-carbon px-3 py-2 text-sm">
-                <p className="text-xs font-bold text-antiguo/60">Costo catalogo</p>
-                <p className={costoCompraCatalogo > 0 ? "font-black text-dorado" : "font-black text-red-100"}>{productoCompraSeleccionado ? formatoCOP(costoCompraCatalogo) : "Selecciona producto"}</p>
-              </div>
-            </div>
-            {productoCompraSeleccionado ? (
-              <div className={costoCompraCatalogo > 0 ? "rounded-md border border-antiguo/10 bg-carbon p-3 text-sm text-antiguo/80" : "rounded-md border border-red-300/30 bg-red-950/20 p-3 text-sm text-red-100"}>
-                {costoCompraCatalogo > 0
-                  ? `Entraran ${unidadesCompraEstimadas || 0} unidad(es). Total estimado: ${formatoCOP(totalCompraEstimado)}.`
-                  : "Este producto no tiene costo configurado. Editalo en la tabla antes de registrar compra."}
-              </div>
-            ) : null}
-            <button disabled={guardando || !compraProveedor || !compraProducto || !compraCantidad || costoCompraCatalogo <= 0} className="tap-target rounded-md bg-oro px-4 font-black text-carbon disabled:opacity-50">Registrar compra</button>
-          </form>
-        </section>
-
-        <section className="rounded-lg border border-antiguo/15 bg-espresso p-4 shadow-suave">
-          <h3 className="text-lg font-black text-crema">Combo y ajuste</h3>
-          <form onSubmit={(event) => guardarCombo(event)} className="mt-3 grid gap-2">
-            <input value={comboForm.nombre} onChange={(event) => setComboForm((actual) => ({ ...actual, nombre: event.target.value }))} placeholder="Nombre combo" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
-            <input value={comboForm.precio} onChange={(event) => setComboForm((actual) => ({ ...actual, precio: event.target.value }))} type="number" placeholder="Precio combo" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
-            <div className="grid gap-2">
-              {comboForm.items.map((item, index) => (
-                <div key={index} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_84px_auto]">
-                  <select value={item.producto_id} onChange={(event) => actualizarItemCombo(index, { producto_id: event.target.value })} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
-                    <option value="">Item {index + 1}</option>
-                    {productosActivos.map((producto) => <option key={producto.id} value={producto.id}>{producto.nombre}</option>)}
-                  </select>
-                  <input value={item.cantidad} onChange={(event) => actualizarItemCombo(index, { cantidad: event.target.value })} type="number" min="1" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
-                  <button type="button" onClick={() => quitarItemCombo(index)} disabled={comboForm.items.length === 1} className="tap-target rounded-md border border-red-300/30 px-3 text-xs font-bold text-red-100 disabled:opacity-40">Quitar</button>
-                </div>
-              ))}
-              <button type="button" onClick={agregarItemCombo} className="tap-target rounded-md border border-antiguo/20 px-3 font-bold text-crema">Agregar item</button>
-            </div>
-            <label className="flex items-center gap-2 text-sm text-antiguo/80"><input checked={comboForm.activo} onChange={(event) => setComboForm((actual) => ({ ...actual, activo: event.target.checked }))} type="checkbox" />Activo</label>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <button disabled={guardando || !comboForm.nombre || comboFormItemsValidos(comboForm).length === 0} className="tap-target rounded-md border border-oro/30 px-4 font-bold text-dorado disabled:opacity-50">{comboForm.id ? "Actualizar combo" : "Guardar combo"}</button>
-              {comboForm.id ? <button type="button" onClick={() => setComboForm(comboInicial)} className="tap-target rounded-md border border-antiguo/20 px-4 font-bold">Cancelar</button> : null}
-            </div>
-          </form>
-
-          <form onSubmit={registrarAjuste} className="mt-4 grid gap-2 border-t border-antiguo/10 pt-4">
-            <select value={ajusteProducto} onChange={(event) => setAjusteProducto(event.target.value)} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
-              <option value="">Producto ajuste</option>
-              {productosActivos.map((producto) => <option key={producto.id} value={producto.id}>{producto.nombre}</option>)}
-            </select>
-            <input value={ajusteCantidad} onChange={(event) => setAjusteCantidad(event.target.value)} type="number" placeholder="+/- unidades" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
-            <select value={ajusteMotivo} onChange={(event) => setAjusteMotivo(event.target.value)} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
-              <option value="">Motivo</option>
-              {motivos.map((motivo) => <option key={motivo.id} value={motivo.id}>{motivo.texto}</option>)}
-            </select>
-            <button disabled={guardando || !ajusteProducto || !ajusteCantidad || !ajusteMotivo} className="tap-target rounded-md border border-oro/30 px-4 font-bold text-dorado disabled:opacity-50">Registrar ajuste</button>
-          </form>
-        </section>
-      </div>
       <section className="rounded-lg border border-antiguo/15 bg-espresso p-4 shadow-suave">
         <div className="flex flex-col gap-3">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -983,6 +993,119 @@ export function CatalogoStockAdminPanel() {
           {movimientosDescuentoFiltrados.length === 0 ? <p className="p-4 text-center text-sm text-antiguo/70">No hay descuentos para ese filtro.</p> : null}
         </div>
       </section>
+      <section className="rounded-lg border border-antiguo/15 bg-espresso p-4 shadow-suave">
+        <div>
+          <h3 className="text-lg font-black text-crema">Acciones de inventario</h3>
+          <p className="text-sm text-antiguo/70">Formularios colapsables para crear o ajustar catalogo y stock.</p>
+          </div>
+        <div className="mt-3 grid gap-3 xl:grid-cols-2">
+        <details className="rounded-md border border-antiguo/15 bg-carbon p-3" open={Boolean(productoForm.id)}>
+          <summary className="cursor-pointer text-lg font-black text-crema">Producto</summary>
+          <form onSubmit={crearCategoria} className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]">
+            <input value={categoriaNueva} onChange={(event) => setCategoriaNueva(event.target.value)} placeholder="Nueva categoria" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
+            <button disabled={guardando || categoriaNueva.length < 2} className="tap-target rounded-md border border-oro/30 px-3 font-bold text-dorado disabled:opacity-50">Crear</button>
+          </form>
+          <form onSubmit={(event) => guardarProducto(event)} className="mt-4 grid gap-2">
+            <input value={productoForm.nombre} onChange={(event) => setProductoForm((actual) => ({ ...actual, nombre: event.target.value }))} placeholder="Nombre" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
+            <select value={productoForm.categoriaId} onChange={(event) => setProductoForm((actual) => ({ ...actual, categoriaId: event.target.value }))} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
+              <option value="">Categoria</option>
+              {categorias.map((categoria) => <option key={categoria.id} value={categoria.id}>{categoria.nombre}</option>)}
+            </select>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <input value={productoForm.precio} onChange={(event) => setProductoForm((actual) => ({ ...actual, precio: event.target.value }))} type="number" placeholder="Precio venta" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
+              <input value={productoForm.costo} onChange={(event) => setProductoForm((actual) => ({ ...actual, costo: event.target.value }))} type="number" placeholder="Costo unidad" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
+              </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <input value={productoForm.codigo} onChange={(event) => setProductoForm((actual) => ({ ...actual, codigo: event.target.value }))} placeholder="Codigo" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
+              <input value={productoForm.minimo} onChange={(event) => setProductoForm((actual) => ({ ...actual, minimo: event.target.value }))} type="number" placeholder="Stock minimo" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
+              </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <input value={productoForm.presentacion} onChange={(event) => setProductoForm((actual) => ({ ...actual, presentacion: event.target.value }))} placeholder="Presentacion compra" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
+              <input value={productoForm.factor} onChange={(event) => setProductoForm((actual) => ({ ...actual, factor: event.target.value }))} type="number" min="1" placeholder="Factor" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
+              </div>
+            <label className="flex items-center gap-2 text-sm text-antiguo/80"><input checked={productoForm.activo} onChange={(event) => setProductoForm((actual) => ({ ...actual, activo: event.target.checked }))} type="checkbox" />Activo</label>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <button disabled={guardando || productoForm.nombre.length < 2} className="tap-target rounded-md bg-oro px-4 font-black text-carbon disabled:opacity-50">{productoForm.id ? "Actualizar producto" : "Guardar producto"}</button>
+              {productoForm.id ? <button type="button" onClick={() => setProductoForm(productoInicial)} className="tap-target rounded-md border border-antiguo/20 px-4 font-bold">Cancelar</button> : null}
+              </div>
+          </form>
+        </details>
+        <details className="rounded-md border border-antiguo/15 bg-carbon p-3">
+          <summary className="cursor-pointer text-lg font-black text-crema">Compra</summary>
+          <form onSubmit={registrarCompra} className="mt-3 grid gap-2">
+            <select value={compraProveedor} onChange={(event) => setCompraProveedor(event.target.value)} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
+              <option value="">Proveedor obligatorio</option>
+              {proveedoresActivos.map((proveedor) => <option key={proveedor.id} value={proveedor.id}>{proveedor.nombre}</option>)}
+            </select>
+            <select value={compraProducto} onChange={(event) => setCompraProducto(event.target.value)} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
+              <option value="">Producto</option>
+              {productosActivos.map((producto) => <option key={producto.id} value={producto.id}>{producto.nombre}</option>)}
+            </select>
+            <select value={compraModo} onChange={(event) => setCompraModo(event.target.value as "unidades" | "presentacion")} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
+              <option value="unidades">Unidades</option>
+              <option value="presentacion">Presentacion de compra</option>
+            </select>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <input value={compraCantidad} onChange={(event) => setCompraCantidad(event.target.value)} type="number" min="1" placeholder="Cantidad" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
+              <div className="rounded-md border border-antiguo/20 bg-carbon px-3 py-2 text-sm">
+                <p className="text-xs font-bold text-antiguo/60">Costo catalogo</p>
+                <p className={costoCompraCatalogo > 0 ? "font-black text-dorado" : "font-black text-red-100"}>{productoCompraSeleccionado ? formatoCOP(costoCompraCatalogo) : "Selecciona producto"}</p>
+                </div>
+              </div>
+            {productoCompraSeleccionado ? (
+              <div className={costoCompraCatalogo > 0 ? "rounded-md border border-antiguo/10 bg-carbon p-3 text-sm text-antiguo/80" : "rounded-md border border-red-300/30 bg-red-950/20 p-3 text-sm text-red-100"}>
+                {costoCompraCatalogo > 0
+                  ? `Entraran ${unidadesCompraEstimadas || 0} unidad(es). Total estimado: ${formatoCOP(totalCompraEstimado)}.`
+                  : "Este producto no tiene costo configurado. Editalo en la tabla antes de registrar compra."}
+                </div>
+            ) : null}
+            <button disabled={guardando || !compraProveedor || !compraProducto || !compraCantidad || costoCompraCatalogo <= 0} className="tap-target rounded-md bg-oro px-4 font-black text-carbon disabled:opacity-50">Registrar compra</button>
+          </form>
+        </details>
+
+        <details className="rounded-md border border-antiguo/15 bg-carbon p-3" open={Boolean(comboForm.id)}>
+          <summary className="cursor-pointer text-lg font-black text-crema">Combo</summary>
+          <form onSubmit={(event) => guardarCombo(event)} className="mt-3 grid gap-2">
+            <input value={comboForm.nombre} onChange={(event) => setComboForm((actual) => ({ ...actual, nombre: event.target.value }))} placeholder="Nombre combo" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
+            <input value={comboForm.precio} onChange={(event) => setComboForm((actual) => ({ ...actual, precio: event.target.value }))} type="number" placeholder="Precio combo" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
+            <div className="grid gap-2">
+              {comboForm.items.map((item, index) => (
+                <div key={index} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_84px_auto]">
+                  <select value={item.producto_id} onChange={(event) => actualizarItemCombo(index, { producto_id: event.target.value })} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
+                    <option value="">Item {index + 1}</option>
+                    {productosActivos.map((producto) => <option key={producto.id} value={producto.id}>{producto.nombre}</option>)}
+                  </select>
+                  <input value={item.cantidad} onChange={(event) => actualizarItemCombo(index, { cantidad: event.target.value })} type="number" min="1" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
+                  <button type="button" onClick={() => quitarItemCombo(index)} disabled={comboForm.items.length === 1} className="tap-target rounded-md border border-red-300/30 px-3 text-xs font-bold text-red-100 disabled:opacity-40">Quitar</button>
+                  </div>
+              ))}
+              <button type="button" onClick={agregarItemCombo} className="tap-target rounded-md border border-antiguo/20 px-3 font-bold text-crema">Agregar item</button>
+              </div>
+            <label className="flex items-center gap-2 text-sm text-antiguo/80"><input checked={comboForm.activo} onChange={(event) => setComboForm((actual) => ({ ...actual, activo: event.target.checked }))} type="checkbox" />Activo</label>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <button disabled={guardando || !comboForm.nombre || comboFormItemsValidos(comboForm).length === 0} className="tap-target rounded-md border border-oro/30 px-4 font-bold text-dorado disabled:opacity-50">{comboForm.id ? "Actualizar combo" : "Guardar combo"}</button>
+              {comboForm.id ? <button type="button" onClick={() => setComboForm(comboInicial)} className="tap-target rounded-md border border-antiguo/20 px-4 font-bold">Cancelar</button> : null}
+              </div>
+          </form>
+        </details>
+        <details className="rounded-md border border-antiguo/15 bg-carbon p-3">
+          <summary className="cursor-pointer text-lg font-black text-crema">Ajuste</summary>
+          <form onSubmit={registrarAjuste} className="mt-3 grid gap-2">
+            <select value={ajusteProducto} onChange={(event) => setAjusteProducto(event.target.value)} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
+              <option value="">Producto ajuste</option>
+              {productosActivos.map((producto) => <option key={producto.id} value={producto.id}>{producto.nombre}</option>)}
+            </select>
+            <input value={ajusteCantidad} onChange={(event) => setAjusteCantidad(event.target.value)} type="number" placeholder="+/- unidades" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
+            <select value={ajusteMotivo} onChange={(event) => setAjusteMotivo(event.target.value)} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
+              <option value="">Motivo</option>
+              {motivos.map((motivo) => <option key={motivo.id} value={motivo.id}>{motivo.texto}</option>)}
+            </select>
+            <button disabled={guardando || !ajusteProducto || !ajusteCantidad || !ajusteMotivo} className="tap-target rounded-md border border-oro/30 px-4 font-bold text-dorado disabled:opacity-50">Registrar ajuste</button>
+          </form>
+        </details>
+        </div>
+      </section>
+
       <section className="rounded-lg border border-antiguo/15 bg-espresso p-4 shadow-suave">
         <h3 className="text-lg font-black text-crema">Proveedores</h3>
         <form onSubmit={(event) => guardarProveedor(event)} className="mt-3 grid gap-2 lg:grid-cols-4">
