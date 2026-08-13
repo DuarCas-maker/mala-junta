@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { CapturasAprobacionAdminPanel } from "@/components/admin/capturas-aprobacion-admin";
+import { CapturasCompraAdminPanel } from "@/components/admin/capturas-compra-admin";
 import { CatalogoStockAdminPanel } from "@/components/admin/catalogo-stock-admin";
 import { InventarioAdminPanel } from "@/components/admin/inventario-admin";
 import { MesasAdminPanel } from "@/components/admin/mesas-admin";
@@ -13,6 +14,7 @@ import { supabaseBrowser } from "@/lib/supabase-browser";
 
 type Estado = "idle" | "cargando" | "guardando";
 type ModuloAdmin = "metricas" | "solicitudes" | "catalogo" | "auditoria" | "mesas" | "usuarios";
+type SolicitudesTab = "ventas" | "compras";
 
 const modulosAdmin: { id: ModuloAdmin; titulo: string; detalle: string }[] = [
   { id: "metricas", titulo: "Metricas", detalle: "Ventas, margen y caja" },
@@ -31,6 +33,7 @@ const accesosOperacion = [
 export function MeserosAdmin() {
   const router = useRouter();
   const [moduloActivo, setModuloActivo] = useState<ModuloAdmin>("metricas");
+  const [solicitudesTab, setSolicitudesTab] = useState<SolicitudesTab>("ventas");
   const [perfilAdmin, setPerfilAdmin] = useState<Perfil | null>(null);
   const [perfiles, setPerfiles] = useState<Perfil[]>([]);
   const [nombre, setNombre] = useState("Mesero nuevo");
@@ -220,7 +223,7 @@ export function MeserosAdmin() {
           {mensaje ? <p className="mb-4 rounded-md border border-antiguo/15 bg-espresso p-3 text-sm font-semibold shadow-suave">{mensaje}</p> : null}
 
           {moduloActivo === "metricas" ? <MetricasAdminPanel /> : null}
-          {moduloActivo === "solicitudes" ? <CapturasAprobacionAdminPanel /> : null}
+          {moduloActivo === "solicitudes" ? <SolicitudesAdminPanel tab={solicitudesTab} setTab={setSolicitudesTab} /> : null}
           {moduloActivo === "catalogo" ? <CatalogoStockAdminPanel /> : null}
           {moduloActivo === "auditoria" ? <InventarioAdminPanel vista="auditoria" /> : null}
           {moduloActivo === "mesas" ? <MesasAdminPanel /> : null}
@@ -241,6 +244,26 @@ export function MeserosAdmin() {
         </section>
       </div>
     </main>
+  );
+}
+
+function SolicitudesAdminPanel({ tab, setTab }: { tab: SolicitudesTab; setTab: (tab: SolicitudesTab) => void }) {
+  return (
+    <section className="space-y-4">
+      <div className="flex flex-wrap gap-2 rounded-lg border border-antiguo/15 bg-espresso p-2 shadow-suave">
+        {(["ventas", "compras"] as SolicitudesTab[]).map((opcion) => (
+          <button
+            key={opcion}
+            type="button"
+            onClick={() => setTab(opcion)}
+            className={tab === opcion ? "tap-target rounded-md bg-oro px-4 text-sm font-black text-carbon" : "tap-target rounded-md border border-antiguo/20 bg-carbon px-4 text-sm font-bold text-crema"}
+          >
+            {opcion === "ventas" ? "Ventas" : "Compras"}
+          </button>
+        ))}
+      </div>
+      {tab === "ventas" ? <CapturasAprobacionAdminPanel /> : <CapturasCompraAdminPanel />}
+    </section>
   );
 }
 
