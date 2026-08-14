@@ -15,6 +15,7 @@ type Motivo = { id: string; texto: string };
 type Cuenta = any;
 type PedidoHistorial = any;
 type ModuloCaja = "cobros" | "pedidos" | "inventario";
+type FiltroFechaCobros = "hoy" | "todos";
 
 const mediosPago: { id: MedioPago; nombre: string }[] = [
   { id: "efectivo", nombre: "Efectivo" },
@@ -143,6 +144,46 @@ function fechaPedido(fecha?: string) {
   return new Date(fecha).toLocaleString("es-CO", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
+function fechaPedidoGrande(fecha?: string) {
+  if (!fecha) return "Sin fecha";
+  return new Date(fecha).toLocaleString("es-CO", { weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+function fechaLocalISO(fecha?: string | Date) {
+  if (!fecha) return "";
+  const date = typeof fecha === "string" ? new Date(fecha) : fecha;
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+}
+
+function pedidosCuenta(cuenta: Cuenta) {
+  return Array.isArray(cuenta.pedidos) ? cuenta.pedidos : [];
+}
+
+function fechaPrincipalCuenta(cuenta: Cuenta) {
+  const pedidos = pedidosCuenta(cuenta);
+  const fechaPedidoReciente = pedidos
+    .map((pedido: PedidoHistorial) => pedido.enviado_at)
+    .filter(Boolean)
+    .sort((a: string, b: string) => new Date(b).getTime() - new Date(a).getTime())[0];
+
+  return fechaPedidoReciente ?? cuenta.ultimo_pedido_at ?? cuenta.created_at;
+}
+
+function fechaMsCuenta(cuenta: Cuenta) {
+  return new Date(fechaPrincipalCuenta(cuenta) ?? 0).getTime() || 0;
+}
+
+function cuentaTienePedidoDelDia(cuenta: Cuenta, fechaISO: string) {
+  const pedidos = pedidosCuenta(cuenta);
+  if (pedidos.length === 0) return fechaLocalISO(fechaPrincipalCuenta(cuenta)) === fechaISO;
+  return pedidos.some((pedido: PedidoHistorial) => fechaLocalISO(pedido.enviado_at) === fechaISO);
+}
+
+function ordenarPedidosPorFecha(pedidos: PedidoHistorial[]) {
+  return [...pedidos].sort((a, b) => new Date(b.enviado_at ?? 0).getTime() - new Date(a.enviado_at ?? 0).getTime());
+}
+
 export function CajaOperativa() {
   const { perfil, cargando, error, salir } = usePerfilProtegido(["caja", "admin"]);
   const [moduloActivo, setModuloActivo] = useState<ModuloCaja>("cobros");
@@ -163,6 +204,7 @@ export function CajaOperativa() {
   const [motivoPorPedido, setMotivoPorPedido] = useState<Record<string, string>>({});
   const [observacionPorPedido, setObservacionPorPedido] = useState<Record<string, string>>({});
   const [requiereAperturaCaja, setRequiereAperturaCaja] = useState(false);
+  const [filtroFechaCobros, setFiltroFechaCobros] = useState<FiltroFechaCobros>("hoy");
 
   const manejarResumenCaja = useCallback((resumenCaja: { requiere_apertura?: boolean }) => {
     setRequiereAperturaCaja(Boolean(resumenCaja.requiere_apertura));
@@ -232,11 +274,19 @@ export function CajaOperativa() {
     };
   }, [perfil, cargar]);
 
+  const cuentasVisibles = useMemo(() => {
+    const hoyISO = fechaLocalISO(new Date());
+    return cuentas
+      .filter((cuenta) => filtroFechaCobros === "todos" || cuentaTienePedidoDelDia(cuenta, hoyISO))
+      .map((cuenta) => ({ ...cuenta, pedidos: ordenarPedidosPorFecha(pedidosCuenta(cuenta)) }))
+      .sort((a, b) => fechaMsCuenta(b) - fechaMsCuenta(a));
+  }, [cuentas, filtroFechaCobros]);
+
   const resumen = useMemo(() => {
-    const totalAbierto = cuentas.reduce((sum, cuenta) => sum + Number(cuenta.total_cuenta ?? 0), 0);
-    const totalRecibido = cuentas.reduce((sum, cuenta) => sum + totalPagado(cuenta), 0);
+    const totalAbierto = cuentasVisibles.reduce((sum, cuenta) => sum + Number(cuenta.total_cuenta ?? 0), 0);
+    const totalRecibido = cuentasVisibles.reduce((sum, cuenta) => sum + totalPagado(cuenta), 0);
     return { totalAbierto, totalRecibido };
-  }, [cuentas]);
+  }, [cuentasVisibles]);
 
   function limpiarPago(cuentaId: string) {
     setMontosPago((actual) => ({ ...actual, [cuentaId]: "" }));
@@ -391,13 +441,20 @@ export function CajaOperativa() {
               <p className="text-sm font-bold uppercase tracking-wide text-oro">Cobros</p>
               <h2 className="text-xl font-black text-crema">Pedidos por cobrar</h2>
             </div>
-            <button onClick={cargar} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-4 text-sm font-bold">Actualizar</button>
+            <div className="flex flex-wrap gap-2">
+              <div className="grid grid-cols-2 rounded-md border border-antiguo/20 bg-carbon p-1">
+                <button type="button" onClick={() => setFiltroFechaCobros("hoy")} className={filtroFechaCobros === "hoy" ? "tap-target rounded bg-oro px-3 text-sm font-black text-carbon" : "tap-target rounded px-3 text-sm font-bold text-crema"}>Hoy</button>
+                <button type="button" onClick={() => setFiltroFechaCobros("todos")} className={filtroFechaCobros === "todos" ? "tap-target rounded bg-oro px-3 text-sm font-black text-carbon" : "tap-target rounded px-3 text-sm font-bold text-crema"}>Todos</button>
+              </div>
+              <button onClick={cargar} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-4 text-sm font-bold">Actualizar</button>
+            </div>
           </div>
 
           <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <div className="rounded-md border border-antiguo/15 bg-carbon p-4">
-              <p className="text-sm text-antiguo/70">Cuentas activas</p>
-              <p className="text-2xl font-black text-crema">{cuentas.length}</p>
+              <p className="text-sm text-antiguo/70">Cuentas visibles</p>
+              <p className="text-2xl font-black text-crema">{cuentasVisibles.length}</p>
+              {filtroFechaCobros === "hoy" ? <p className="mt-1 text-xs text-antiguo/55">Filtro: hoy</p> : <p className="mt-1 text-xs text-antiguo/55">Total activo: {cuentas.length}</p>}
             </div>
             <div className="rounded-md border border-antiguo/15 bg-carbon p-4">
               <p className="text-sm text-antiguo/70">Total abierto</p>
@@ -410,18 +467,20 @@ export function CajaOperativa() {
           </div>
 
           <div className="mt-4 grid gap-4 xl:grid-cols-2">
-          {cuentas.map((cuenta) => {
+          {cuentasVisibles.map((cuenta) => {
             const total = Number(cuenta.total_cuenta ?? 0);
             const pagado = totalPagado(cuenta);
             const saldo = Math.max(total - pagado, 0);
-            const pedidos = cuenta.pedidos ?? [];
+            const pedidos = pedidosCuenta(cuenta);
             const pagosCuenta = cuenta.pagos ?? [];
             const bloqueada = procesando === cuenta.id;
+            const fechaCuenta = fechaPrincipalCuenta(cuenta);
 
             return (
               <article key={cuenta.id} className="rounded-lg border border-antiguo/15 bg-espresso p-3 shadow-suave sm:p-4">
                 <div className="flex flex-col gap-2 border-b border-antiguo/10 pb-3 sm:flex-row sm:items-start sm:justify-between">
                   <div>
+                    <p className="text-lg font-black text-dorado sm:text-xl">{fechaPedidoGrande(fechaCuenta)}</p>
                     <p className="text-sm font-bold text-oro">{nombreMesa(cuenta)}</p>
                     <h2 className="text-xl font-black text-crema">{estadoCobroCuenta(cuenta)}</h2>
                     <p className="text-xs text-antiguo/60">Estado cuenta: {cuenta.estado}</p>
@@ -439,6 +498,7 @@ export function CajaOperativa() {
                     <section key={pedido.id} className="rounded-md border border-antiguo/10 bg-carbon p-3">
                       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                         <div>
+                          <p className="text-lg font-black text-dorado">{fechaPedidoGrande(pedido.enviado_at)}</p>
                           <p className="text-sm font-bold text-crema">{estadoPedidoTexto(pedido.estado)}</p>
                           <p className="text-xs text-antiguo/60">Mesero: {meseroPedido(pedido)}</p>
                           {pedido.notas ? <p className="mt-1 text-sm text-antiguo/80">{pedido.notas}</p> : null}
@@ -559,7 +619,7 @@ export function CajaOperativa() {
           })}
         </div>
 
-          {cuentas.length === 0 ? <p className="mt-4 rounded-md border border-antiguo/15 bg-carbon p-6 text-center text-antiguo/70">No hay cuentas activas.</p> : null}
+          {cuentasVisibles.length === 0 ? <p className="mt-4 rounded-md border border-antiguo/15 bg-carbon p-6 text-center text-antiguo/70">{filtroFechaCobros === "hoy" ? "No hay pedidos por cobrar de hoy." : "No hay cuentas activas."}</p> : null}
         </section>
 
         <CapturasVentaPanel colapsable defaultExpandido={false} />
