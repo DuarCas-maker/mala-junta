@@ -120,7 +120,7 @@ function nombreMesa(cuenta: Cuenta) {
 }
 
 function meseroPedido(pedido: any) {
-  const perfil = Array.isArray(pedido.perfiles) ? pedido.perfiles[0] : pedido.perfiles;
+  const perfil = relacionUno(pedido.mesero ?? pedido.perfiles);
   return perfil?.nombre ?? "-";
 }
 
@@ -174,7 +174,7 @@ export function CajaOperativa() {
       supabase.rpc("cuentas_activas_caja"),
       supabase
         .from("pedidos")
-        .select("id,estado,enviado_at,notas,perfiles(nombre),cuentas(id,estado,total_cuenta,responsable_pendiente,mesas(nombre,zona)),pedido_items(id,cantidad,precio_unitario_capturado,productos(nombre),combos(nombre))")
+        .select("id,estado,enviado_at,notas,mesero:perfiles!pedidos_mesero_id_fkey(nombre),cuentas(id,estado,total_cuenta,responsable_pendiente,mesas(nombre,zona)),pedido_items(id,cantidad,precio_unitario_capturado,productos(nombre),combos(nombre))")
         .neq("estado", "anulado")
         .order("enviado_at", { ascending: false })
         .limit(80),
@@ -186,13 +186,14 @@ export function CajaOperativa() {
       return;
     }
 
+    const pedidosHistorial = historialRes.error ? [] : (historialRes.data ?? []) as PedidoHistorial[];
     if (historialRes.error) {
       setMensaje(`No se pudo cargar historial: ${historialRes.error.message}`);
       setHistorial([]);
-      return;
+    } else {
+      setMensaje(null);
     }
 
-    const pedidosHistorial = (historialRes.data ?? []) as PedidoHistorial[];
     setCuentas(completarCuentasConHistorial(normalizarCuentasCaja(cuentasRes.data), pedidosHistorial));
     setHistorial(pedidosHistorial.slice(0, 16));
     setActualizadoAt(new Date().toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
