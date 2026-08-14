@@ -267,7 +267,13 @@ function estadoVenta(grupo: GrupoRevision) {
   if (grupo.aprobado && !grupo.requiere_revision) return { texto: "Lista para enviar", clase: "border-blue-200/50 bg-blue-950/25 text-blue-100" };
   return { texto: "Requiere revision", clase: "border-white bg-white/10 text-white" };
 }
-export function CapturasVentaPanel() {
+
+type CapturasVentaPanelProps = {
+  colapsable?: boolean;
+  defaultExpandido?: boolean;
+};
+
+export function CapturasVentaPanel({ colapsable = false, defaultExpandido = true }: CapturasVentaPanelProps = {}) {
   const [catalogo, setCatalogo] = useState<ItemCatalogo[]>([]);
   const [foto, setFoto] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -281,6 +287,7 @@ export function CapturasVentaPanel() {
   const [historial, setHistorial] = useState<CapturaHistorial[]>([]);
   const [historialCargando, setHistorialCargando] = useState(false);
   const [historialExpandido, setHistorialExpandido] = useState<Record<string, boolean>>({});
+  const [panelExpandido, setPanelExpandido] = useState(defaultExpandido);
   const [lineasEliminadas, setLineasEliminadas] = useState<string[]>([]);
   const [pagosEliminados, setPagosEliminados] = useState<string[]>([]);
   const camaraInputRef = useRef<HTMLInputElement | null>(null);
@@ -850,16 +857,25 @@ export function CapturasVentaPanel() {
           <h2 className="text-xl font-black text-crema">Revision asistida</h2>
           <p className="mt-1 text-sm text-antiguo/70">Sube la anotacion, revisa ventas, pagos y diferencias.</p>
         </div>
-        {resultado ? (
-          <div className="grid grid-cols-2 gap-2 text-center text-xs sm:min-w-[28rem] sm:grid-cols-4">
-            <div className="rounded-md border border-antiguo/10 bg-carbon p-2"><p className="text-antiguo/60">Ventas</p><p className="font-black text-dorado">{resultado.grupos.length}</p></div>
-            <div className="rounded-md border border-red-400/20 bg-red-950/20 p-2"><p className="text-antiguo/60">Faltante</p><p className="font-black text-red-100">{formatoCOP(resumen.faltante)}</p></div>
-            <div className="rounded-md border border-green-400/20 bg-green-950/20 p-2"><p className="text-antiguo/60">Positivo</p><p className="font-black text-green-100">{formatoCOP(resumen.positivo)}</p></div>
-            <div className="rounded-md border border-antiguo/10 bg-carbon p-2"><p className="text-antiguo/60">Neto</p><p className="font-black text-dorado">{formatoCOP(resumen.neto)}</p></div>
+        <div className="flex flex-col gap-2 sm:items-end">
+          {colapsable ? (
+            <button type="button" onClick={() => setPanelExpandido((actual) => !actual)} aria-expanded={panelExpandido} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-4 text-sm font-bold">
+              {panelExpandido ? "Ocultar" : "Abrir"}
+            </button>
+          ) : null}
+          {resultado && panelExpandido ? (
+            <div className="grid grid-cols-2 gap-2 text-center text-xs sm:min-w-[28rem] sm:grid-cols-4">
+              <div className="rounded-md border border-antiguo/10 bg-carbon p-2"><p className="text-antiguo/60">Ventas</p><p className="font-black text-dorado">{resultado.grupos.length}</p></div>
+              <div className="rounded-md border border-red-400/20 bg-red-950/20 p-2"><p className="text-antiguo/60">Faltante</p><p className="font-black text-red-100">{formatoCOP(resumen.faltante)}</p></div>
+              <div className="rounded-md border border-green-400/20 bg-green-950/20 p-2"><p className="text-antiguo/60">Positivo</p><p className="font-black text-green-100">{formatoCOP(resumen.positivo)}</p></div>
+              <div className="rounded-md border border-antiguo/10 bg-carbon p-2"><p className="text-antiguo/60">Neto</p><p className="font-black text-dorado">{formatoCOP(resumen.neto)}</p></div>
+            </div>
+          ) : null}
           </div>
-        ) : null}
       </div>
 
+      {panelExpandido ? (
+        <>
       <form onSubmit={procesarFoto} className="mt-4 grid gap-3 lg:grid-cols-[260px_1fr]">
         <div className="flex min-h-52 flex-col items-center justify-center rounded-md border border-dashed border-antiguo/25 bg-carbon p-3 text-center text-sm text-antiguo/70">
           {previewUrl ? <Image src={previewUrl} alt="Foto seleccionada" width={640} height={480} unoptimized className="max-h-72 w-full rounded-md object-contain" /> : <span>Selecciona una foto de la hoja</span>}
@@ -1078,6 +1094,8 @@ export function CapturasVentaPanel() {
           {historial.length === 0 && !historialCargando ? <p className="rounded-md border border-antiguo/10 bg-espresso p-4 text-center text-sm text-antiguo/70">No hay capturas guardadas.</p> : null}
         </div>
       </section>
+        </>
+      ) : null}
     </section>
   );
 }

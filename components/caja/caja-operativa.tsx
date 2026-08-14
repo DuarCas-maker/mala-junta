@@ -51,6 +51,62 @@ function normalizarCuentasCaja(data: unknown): Cuenta[] {
   });
 }
 
+function relacionUno<T = any>(valor: T | T[] | null | undefined): T | null {
+  if (Array.isArray(valor)) return valor[0] ?? null;
+  return valor ?? null;
+}
+
+function estadoCobroDesdePedido(cuenta: Cuenta, pedidos: PedidoHistorial[]) {
+  if (cuenta.estado === "pendiente") return "Pendiente";
+  if (cuenta.estado === "pagada_parcial") return "Pago parcial";
+  if (cuenta.estado === "por_cobrar") return "Por cobrar";
+  if (pedidos.some((pedido) => pedido.estado === "en_preparacion")) return "En preparacion";
+  if (pedidos.some((pedido) => pedido.estado === "enviado")) return "Enviado";
+  if (pedidos.length > 0) return "Por cobrar";
+  return "Abierta";
+}
+
+function completarCuentasConHistorial(cuentasRpc: Cuenta[], pedidos: PedidoHistorial[]) {
+  const cuentasPorId = new Map<string, Cuenta>();
+
+  cuentasRpc.forEach((cuenta) => {
+    if (cuenta?.id) cuentasPorId.set(cuenta.id, cuenta);
+  });
+
+  pedidos.forEach((pedido) => {
+    if (pedido.estado === "anulado") return;
+
+    const cuentaPedido = relacionUno<Cuenta>(pedido.cuentas);
+    if (!cuentaPedido?.id || ["pagada", "cerrada", "anulada"].includes(cuentaPedido.estado)) return;
+
+    const cuentaActual = cuentasPorId.get(cuentaPedido.id);
+    const pedidosActuales = Array.isArray(cuentaActual?.pedidos) ? cuentaActual.pedidos : [];
+
+    if (cuentaActual) {
+      if (!pedidosActuales.some((actual: PedidoHistorial) => actual.id === pedido.id)) {
+        cuentaActual.pedidos = [...pedidosActuales, pedido].sort((a: PedidoHistorial, b: PedidoHistorial) => new Date(b.enviado_at ?? 0).getTime() - new Date(a.enviado_at ?? 0).getTime());
+      }
+      return;
+    }
+
+    cuentasPorId.set(cuentaPedido.id, {
+      ...cuentaPedido,
+      estado_cobro: estadoCobroDesdePedido(cuentaPedido, [pedido]),
+      prioridad_cobro: pedido.estado === "en_preparacion" ? 2 : pedido.estado === "enviado" ? 3 : 1,
+      pedido_estado_prioridad: pedido.estado === "entregado" ? 1 : pedido.estado === "en_preparacion" ? 2 : pedido.estado === "enviado" ? 3 : 9,
+      ultimo_pedido_at: pedido.enviado_at,
+      total_pagado: 0,
+      saldo: Number(cuentaPedido.total_cuenta ?? 0),
+      perfiles: { nombre: "-" },
+      documentos: [],
+      pagos: [],
+      pedidos: [pedido],
+    });
+  });
+
+  return normalizarCuentasCaja([...cuentasPorId.values()]);
+}
+
 function estadoCobroCuenta(cuenta: Cuenta) {
   return cuenta.estado_cobro ?? cuenta.estado ?? "Abierta";
 }
@@ -118,9 +174,10 @@ export function CajaOperativa() {
       supabase.rpc("cuentas_activas_caja"),
       supabase
         .from("pedidos")
-        .select("id,estado,enviado_at,notas,perfiles(nombre),cuentas(estado,total_cuenta,mesas(nombre,zona)),pedido_items(id,cantidad,precio_unitario_capturado,productos(nombre),combos(nombre))")
+        .select("id,estado,enviado_at,notas,perfiles(nombre),cuentas(id,estado,total_cuenta,responsable_pendiente,mesas(nombre,zona)),pedido_items(id,cantidad,precio_unitario_capturado,productos(nombre),combos(nombre))")
+        .neq("estado", "anulado")
         .order("enviado_at", { ascending: false })
-        .limit(16),
+        .limit(80),
     ]);
 
     if (cuentasRes.error) {
@@ -135,8 +192,9 @@ export function CajaOperativa() {
       return;
     }
 
-    setCuentas(normalizarCuentasCaja(cuentasRes.data));
-    setHistorial((historialRes.data ?? []) as PedidoHistorial[]);
+    const pedidosHistorial = (historialRes.data ?? []) as PedidoHistorial[];
+    setCuentas(completarCuentasConHistorial(normalizarCuentasCaja(cuentasRes.data), pedidosHistorial));
+    setHistorial(pedidosHistorial.slice(0, 16));
     setActualizadoAt(new Date().toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
   }, []);
 
@@ -323,63 +381,34 @@ export function CajaOperativa() {
           <>
             <CierreCajaPanel perfil={perfil!} onResumenChange={manejarResumenCaja} />
 
-        <CapturasVentaPanel />
-
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <div className="rounded-lg border border-antiguo/15 bg-espresso p-4">
-            <p className="text-sm text-antiguo/70">Cuentas activas</p>
-            <p className="text-2xl font-black text-crema">{cuentas.length}</p>
-          </div>
-          <div className="rounded-lg border border-antiguo/15 bg-espresso p-4">
-            <p className="text-sm text-antiguo/70">Total abierto</p>
-            <p className="text-2xl font-black text-dorado">{formatoCOP(resumen.totalAbierto)}</p>
-          </div>
-          <div className="rounded-lg border border-antiguo/15 bg-espresso p-4">
-            <p className="text-sm text-antiguo/70">Abonos visibles</p>
-            <p className="text-2xl font-black text-dorado">{formatoCOP(resumen.totalRecibido)}</p>
-          </div>
-        </div>
-
         {actualizadoAt ? <p className="text-xs font-bold uppercase tracking-wide text-antiguo/55">Actualizado {actualizadoAt}</p> : null}
         {mensaje ? <p className="rounded-md border border-antiguo/15 bg-espresso p-3 text-sm">{mensaje}</p> : null}
 
         <section className="rounded-lg border border-antiguo/15 bg-espresso p-3 shadow-suave sm:p-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="text-sm font-bold uppercase tracking-wide text-oro">Historial</p>
-              <h2 className="text-xl font-black text-crema">Pedidos recientes</h2>
+              <p className="text-sm font-bold uppercase tracking-wide text-oro">Cobros</p>
+              <h2 className="text-xl font-black text-crema">Pedidos por cobrar</h2>
             </div>
             <button onClick={cargar} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-4 text-sm font-bold">Actualizar</button>
           </div>
-          <div className="mt-3 grid gap-3 lg:grid-cols-2">
-            {historial.map((pedido) => (
-              <article key={pedido.id} className="rounded-md border border-antiguo/10 bg-carbon p-3">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                  <div>
-                    <p className="text-sm font-black text-crema">{cuentaPedido(pedido)}</p>
-                    <p className="text-xs text-antiguo/60">{fechaPedido(pedido.enviado_at)} - Mesero: {meseroPedido(pedido)}</p>
-                  </div>
-                  <div className="text-left sm:text-right">
-                    <p className="text-xs font-bold uppercase tracking-wide text-oro">{estadoPedidoTexto(pedido.estado)}</p>
-                    <p className="text-sm font-black text-dorado">{formatoCOP(totalPedido(pedido))}</p>
-                  </div>
-                </div>
-                {pedido.notas ? <p className="mt-2 text-sm text-antiguo/75">{pedido.notas}</p> : null}
-                <ul className="mt-3 space-y-2 text-sm">
-                  {(pedido.pedido_items ?? []).map((item: any) => (
-                    <li key={item.id} className="flex flex-wrap justify-between gap-x-3 gap-y-1 border-t border-antiguo/10 pt-2">
-                      <span>{item.cantidad} x {item.productos?.nombre ?? item.combos?.nombre}</span>
-                      <span className="font-bold text-dorado">{formatoCOP(Number(item.cantidad) * Number(item.precio_unitario_capturado))}</span>
-                    </li>
-                  ))}
-                </ul>
-              </article>
-            ))}
-          </div>
-          {historial.length === 0 ? <p className="mt-3 rounded-md border border-antiguo/10 bg-carbon p-4 text-center text-sm text-antiguo/70">Todavia no hay pedidos registrados.</p> : null}
-        </section>
 
-        <div className="grid gap-4 xl:grid-cols-2">
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="rounded-md border border-antiguo/15 bg-carbon p-4">
+              <p className="text-sm text-antiguo/70">Cuentas activas</p>
+              <p className="text-2xl font-black text-crema">{cuentas.length}</p>
+            </div>
+            <div className="rounded-md border border-antiguo/15 bg-carbon p-4">
+              <p className="text-sm text-antiguo/70">Total abierto</p>
+              <p className="text-2xl font-black text-dorado">{formatoCOP(resumen.totalAbierto)}</p>
+            </div>
+            <div className="rounded-md border border-antiguo/15 bg-carbon p-4">
+              <p className="text-sm text-antiguo/70">Abonos visibles</p>
+              <p className="text-2xl font-black text-dorado">{formatoCOP(resumen.totalRecibido)}</p>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-4 xl:grid-cols-2">
           {cuentas.map((cuenta) => {
             const total = Number(cuenta.total_cuenta ?? 0);
             const pagado = totalPagado(cuenta);
@@ -529,7 +558,46 @@ export function CajaOperativa() {
           })}
         </div>
 
-        {cuentas.length === 0 ? <p className="rounded-md border border-antiguo/15 bg-espresso p-6 text-center text-antiguo/70">No hay cuentas activas.</p> : null}
+          {cuentas.length === 0 ? <p className="mt-4 rounded-md border border-antiguo/15 bg-carbon p-6 text-center text-antiguo/70">No hay cuentas activas.</p> : null}
+        </section>
+
+        <CapturasVentaPanel colapsable defaultExpandido={false} />
+
+        <section className="rounded-lg border border-antiguo/15 bg-espresso p-3 shadow-suave sm:p-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-bold uppercase tracking-wide text-oro">Historial</p>
+              <h2 className="text-xl font-black text-crema">Pedidos recientes</h2>
+            </div>
+            <button onClick={cargar} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-4 text-sm font-bold">Actualizar</button>
+          </div>
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            {historial.map((pedido) => (
+              <article key={pedido.id} className="rounded-md border border-antiguo/10 bg-carbon p-3">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="text-sm font-black text-crema">{cuentaPedido(pedido)}</p>
+                    <p className="text-xs text-antiguo/60">{fechaPedido(pedido.enviado_at)} - Mesero: {meseroPedido(pedido)}</p>
+                  </div>
+                  <div className="text-left sm:text-right">
+                    <p className="text-xs font-bold uppercase tracking-wide text-oro">{estadoPedidoTexto(pedido.estado)}</p>
+                    <p className="text-sm font-black text-dorado">{formatoCOP(totalPedido(pedido))}</p>
+                  </div>
+                </div>
+                {pedido.notas ? <p className="mt-2 text-sm text-antiguo/75">{pedido.notas}</p> : null}
+                <ul className="mt-3 space-y-2 text-sm">
+                  {(pedido.pedido_items ?? []).map((item: any) => (
+                    <li key={item.id} className="flex flex-wrap justify-between gap-x-3 gap-y-1 border-t border-antiguo/10 pt-2">
+                      <span>{item.cantidad} x {item.productos?.nombre ?? item.combos?.nombre}</span>
+                      <span className="font-bold text-dorado">{formatoCOP(Number(item.cantidad) * Number(item.precio_unitario_capturado))}</span>
+                    </li>
+                  ))}
+                </ul>
+              </article>
+            ))}
+          </div>
+          {historial.length === 0 ? <p className="mt-3 rounded-md border border-antiguo/10 bg-carbon p-4 text-center text-sm text-antiguo/70">Todavia no hay pedidos registrados.</p> : null}
+        </section>
           </>
         )}
       </section>
