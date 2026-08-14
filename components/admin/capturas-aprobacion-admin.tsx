@@ -38,6 +38,7 @@ type GrupoRevision = {
   confirmado_por?: string | null; eliminado_at?: string | null; lineas: LineaRevision[]; pagos: PagoRevision[];
 };
 type CapturaDetalle = { captura: CapturaVenta; grupos: GrupoRevision[]; imagen_url: string | null };
+type EliminacionCapturaResultado = { ventas_eliminadas?: number; ventas_reversadas?: number };
 
 const mediosPago: { id: MedioPago; nombre: string }[] = [
   { id: "efectivo", nombre: "Efectivo" },
@@ -252,6 +253,36 @@ export function CapturasAprobacionAdminPanel() {
     actualizarGrupo(capturaId, grupo.id, { requiere_revision: false, aprobado: true, aprobado_at: new Date().toISOString(), lineas: grupo.lineas.map((linea) => ({ ...linea, requiere_revision: false })), pagos: grupo.pagos.map((pago) => ({ ...pago, requiere_revision: false })) });
   }
 
+  function marcarTodasListas(capturaId: string) {
+    const detalle = detalles[capturaId]; if (!detalle) return;
+    const editables = detalle.grupos.filter(itemEditable);
+    if (editables.length === 0) { setMensaje("No hay ventas editables para marcar como listas."); return; }
+
+    const errores = editables
+      .map((grupo) => ({ orden: grupo.orden, problemas: problemasGrupo(grupo) }))
+      .filter((item) => item.problemas.length > 0);
+
+    if (errores.length > 0) {
+      const resumenErrores = errores.slice(0, 4).map((item) => `Venta ${item.orden}: ${item.problemas.join(", ")}`).join(" / ");
+      setMensaje(`${resumenErrores}${errores.length > 4 ? ` / ${errores.length - 4} venta(s) mas con pendientes` : ""}.`);
+      return;
+    }
+
+    const aprobadoAt = new Date().toISOString();
+    actualizarDetalle(capturaId, detalle.grupos.map((grupo) => {
+      if (!itemEditable(grupo)) return grupo;
+      return recalcularGrupo({
+        ...grupo,
+        requiere_revision: false,
+        aprobado: true,
+        aprobado_at: aprobadoAt,
+        lineas: grupo.lineas.map((linea) => ({ ...linea, requiere_revision: false })),
+        pagos: grupo.pagos.map((pago) => ({ ...pago, requiere_revision: false })),
+      });
+    }));
+    setMensaje(`${editables.length} venta(s) marcadas como listas. Ahora puedes aprobar la captura completa.`);
+  }
+
   async function agregarVenta(capturaId: string) {
     const detalle = detalles[capturaId]; if (!detalle) return;
     if (!capturaEditable(detalle.captura, detalle.grupos)) { setMensaje("Esta captura ya tiene ventas confirmadas o esta cerrada; no permite agregar ventas."); return; }
@@ -364,12 +395,13 @@ export function CapturasAprobacionAdminPanel() {
     setGuardando(capturaId); setMensaje(null);
     try {
       const supabase = supabaseBrowser();
-      const { error } = await supabase.rpc("eliminar_captura_venta", { p_captura_id: capturaId });
+      const { data, error } = await supabase.rpc("eliminar_captura_venta", { p_captura_id: capturaId });
       if (error) throw new Error(error.message);
+      const resultado = data as EliminacionCapturaResultado | null;
       await cargarResumen();
       setDetalles((actual) => { const copia = { ...actual }; delete copia[capturaId]; return copia; });
       setAbiertas((actual) => ({ ...actual, [capturaId]: false }));
-      setMensaje("Captura eliminada.");
+      setMensaje(`Captura eliminada. Ventas cerradas: ${resultado?.ventas_eliminadas ?? 0}. Reversadas: ${resultado?.ventas_reversadas ?? 0}.`);
     } catch (err) { setMensaje(err instanceof Error ? err.message : "No se pudo eliminar la captura."); }
     finally { setGuardando(null); }
   }
@@ -404,6 +436,8 @@ export function CapturasAprobacionAdminPanel() {
             const abierta = Boolean(abiertas[captura.id]);
             const detalle = detalles[captura.id];
             const resumenDetalle = detalle ? resumenGrupos(detalle.grupos) : null;
+            const puedeMarcarTodas = detalle ? detalle.grupos.some(itemEditable) : false;
+            const capturaYaEliminada = detalle ? ["eliminada", "rechazada"].includes(detalle.captura.estado) : ["eliminada", "rechazada"].includes(captura.estado);
             return (
               <article key={captura.id} className="rounded-md border border-antiguo/15 bg-carbon">
                 <button type="button" onClick={() => void toggleCaptura(captura.id)} className="w-full px-3 py-3 text-left sm:px-4">
@@ -428,8 +462,9 @@ export function CapturasAprobacionAdminPanel() {
                             <label className="text-xs font-bold text-antiguo/80">Fecha de venta<input type="date" value={detalle.captura.fecha_venta ?? fechaInputHoy()} onChange={(event) => actualizarFechaVenta(captura.id, event.target.value)} disabled={guardando !== null || !capturaEditable(detalle.captura, detalle.grupos)} className="tap-target mt-1 w-full rounded-md border border-antiguo/20 bg-carbon px-3 text-crema disabled:opacity-60" /></label>
                             <button type="button" onClick={() => void guardarRevision(captura.id)} disabled={guardando !== null} className="tap-target rounded-md bg-oro px-4 text-sm font-black text-carbon disabled:opacity-50">Guardar cambios</button>
                             <button type="button" onClick={() => void agregarVenta(captura.id)} disabled={guardando !== null || !capturaEditable(detalle.captura, detalle.grupos)} className="tap-target rounded-md border border-white/40 px-4 text-sm font-black text-white disabled:opacity-50">Agregar venta</button>
+                            <button type="button" onClick={() => marcarTodasListas(captura.id)} disabled={guardando !== null || !puedeMarcarTodas} className="tap-target rounded-md bg-white px-4 text-sm font-black text-carbon disabled:opacity-50">Marcar como lista todas las ventas</button>
                             <button type="button" onClick={() => void aprobarCaptura(captura.id)} disabled={guardando !== null || (resumenDetalle?.pendientes ?? 1) > 0} className="tap-target rounded-md bg-green-600 px-4 text-sm font-black text-white disabled:opacity-50">Aprobar captura completa</button>
-                            <button type="button" onClick={() => void eliminarCaptura(captura.id)} disabled={guardando !== null} className="tap-target rounded-md border border-red-300/40 px-4 text-sm font-bold text-red-100 disabled:opacity-50">Eliminar captura</button>
+                            <button type="button" onClick={() => void eliminarCaptura(captura.id)} disabled={guardando !== null || capturaYaEliminada} className="tap-target rounded-md border border-red-300/40 px-4 text-sm font-bold text-red-100 disabled:opacity-50">{guardando === captura.id ? "Eliminando..." : "Eliminar captura"}</button>
                           </div>
                         </aside>
                         <div className="space-y-4">{detalle.grupos.map((grupo) => <GrupoAdminCard key={grupo.id} capturaId={captura.id} grupo={grupo} catalogo={catalogo} ocupado={guardando !== null} actualizarGrupo={actualizarGrupo} actualizarLinea={actualizarLinea} actualizarPago={actualizarPago} seleccionarItem={seleccionarItem} agregarLinea={agregarLinea} quitarLinea={quitarLinea} agregarPago={agregarPago} quitarPago={quitarPago} marcarLista={marcarLista} aprobarVenta={aprobarVenta} eliminarVenta={eliminarVenta} />)}</div>
