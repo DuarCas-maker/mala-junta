@@ -13,6 +13,7 @@ type ItemVenta = {
   tipo: "producto" | "combo";
   nombre: string;
   precio_venta: number;
+  imagen_url?: string | null;
   stock_actual?: number;
   presentacion_compra?: string | null;
   categorias?: { nombre: string } | { nombre: string }[] | null;
@@ -110,6 +111,19 @@ function nombreHistorialItem(item: any) {
   return componentes.length > 0 ? `${combo.nombre} - ${componentes.join(", ")}` : combo.nombre;
 }
 
+function ImagenItemVenta({ url, nombre }: { url?: string | null; nombre: string }) {
+  if (url) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={url} alt={nombre} className="h-full w-full object-contain drop-shadow-[0_12px_20px_rgba(0,0,0,0.45)]" loading="lazy" />;
+  }
+
+  return (
+    <div className="grid h-full w-full place-items-center rounded-md border border-antiguo/10 bg-[radial-gradient(circle_at_50%_30%,rgba(226,176,127,0.20),transparent_55%),#100D08] text-2xl font-black uppercase text-oro/80">
+      {nombre.trim().slice(0, 2) || "MJ"}
+    </div>
+  );
+}
+
 export function PedidoRapidoPanel({
   perfil,
   etiqueta = "Mesero",
@@ -129,6 +143,8 @@ export function PedidoRapidoPanel({
   const [historial, setHistorial] = useState<PedidoHistorial[]>([]);
   const [categoriaFiltro, setCategoriaFiltro] = useState("");
   const [busqueda, setBusqueda] = useState("");
+  const [busquedaAbierta, setBusquedaAbierta] = useState(false);
+  const [itemActivo, setItemActivo] = useState<string | null>(null);
 
   useEffect(() => {
     setPendientes(leerPendientes());
@@ -142,8 +158,8 @@ export function PedidoRapidoPanel({
       const supabase = supabaseBrowser();
       const [{ data: mesasData, error: mesasError }, { data: productosData, error: productosError }, { data: combosData, error: combosError }, { data: historialData, error: historialError }] = await Promise.all([
         supabase.from("mesas").select("id,nombre,zona,es_vip").eq("activa", true).order("nombre"),
-        supabase.from("v_productos_operativos").select("id,nombre,precio_venta,stock_actual,presentacion_compra,categoria").order("nombre"),
-        supabase.from("combos").select("id,nombre,precio_venta,combo_items(id,cantidad,activo,productos(nombre,presentacion_compra))").eq("activo", true).order("nombre"),
+        supabase.from("v_productos_operativos").select("id,nombre,precio_venta,imagen_url,stock_actual,presentacion_compra,categoria").order("nombre"),
+        supabase.from("combos").select("id,nombre,precio_venta,imagen_url,combo_items(id,cantidad,activo,productos(nombre,presentacion_compra))").eq("activo", true).order("nombre"),
         supabase
           .from("pedidos")
           .select("id,estado,enviado_at,notas,cuentas(estado,total_cuenta,mesas(nombre,zona)),pedido_items(id,cantidad,precio_unitario_capturado,productos(nombre,presentacion_compra),combos(nombre,combo_items(cantidad,activo,productos(nombre,presentacion_compra))))")
@@ -162,6 +178,7 @@ export function PedidoRapidoPanel({
         tipo: "producto" as const,
         nombre: producto.nombre,
         precio_venta: Number(producto.precio_venta),
+        imagen_url: producto.imagen_url,
         stock_actual: Number(producto.stock_actual ?? 0),
         presentacion_compra: producto.presentacion_compra,
         categorias: null,
@@ -173,6 +190,7 @@ export function PedidoRapidoPanel({
         tipo: "combo" as const,
         nombre: combo.nombre,
         precio_venta: Number(combo.precio_venta),
+        imagen_url: combo.imagen_url,
         componentes: (combo.combo_items ?? [])
           .filter((item: any) => item.activo !== false && item.productos)
           .map((item: any) => {
@@ -221,7 +239,22 @@ export function PedidoRapidoPanel({
     return itemsVenta.reduce((sum, item) => sum + (cantidades[item.clave] ?? 0) * Number(item.precio_venta), 0);
   }, [cantidades, itemsVenta]);
 
+  const itemsSeleccionados = useMemo(() => {
+    return itemsVenta
+      .map((item) => ({ item, cantidad: cantidades[item.clave] ?? 0 }))
+      .filter(({ cantidad }) => cantidad > 0);
+  }, [cantidades, itemsVenta]);
+
+  const cantidadItems = useMemo(() => {
+    return itemsSeleccionados.reduce((sum, { cantidad }) => sum + cantidad, 0);
+  }, [itemsSeleccionados]);
+
+  function activarItem(clave: string) {
+    setItemActivo(clave);
+  }
+
   function cambiarCantidad(clave: string, delta: number) {
+    setItemActivo(clave);
     setCantidades((actual) => {
       const siguiente = Math.max(0, (actual[clave] ?? 0) + delta);
       return { ...actual, [clave]: siguiente };
@@ -281,6 +314,7 @@ export function PedidoRapidoPanel({
       await enviarPayload(payload);
       setMensaje("Pedido enviado a caja.");
       setCantidades({});
+      setItemActivo(null);
       setNotas("");
       await cargarHistorial();
       await onPedidoEnviado?.();
@@ -289,6 +323,7 @@ export function PedidoRapidoPanel({
         guardarComoPendiente({ mesaId, items, notas });
         setMensaje("No se pudo sincronizar. Guarde el pedido para reintentar.");
         setCantidades({});
+        setItemActivo(null);
         setNotas("");
       } else {
         setMensaje(err instanceof Error ? err.message : "No se pudo enviar el pedido.");
@@ -340,60 +375,138 @@ export function PedidoRapidoPanel({
         </section>
       ) : null}
 
-      <form onSubmit={enviarPedido} className="grid gap-4 lg:grid-cols-[280px_1fr] lg:gap-5">
-        <aside className="rounded-lg border border-antiguo/15 bg-espresso p-3 shadow-suave sm:p-4">
-          <label className="block text-sm font-bold text-champana">
-            Mesa o zona
-            <select value={mesaId} onChange={(event) => setMesaId(event.target.value)} className="tap-target mt-2 w-full rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
-              <option value="">Pedido directo</option>
-              {mesas.map((mesa) => (
-                <option key={mesa.id} value={mesa.id}>{mesa.nombre} - {mesa.zona}</option>
-              ))}
-            </select>
-          </label>
-          <label className="mt-4 block text-sm font-bold text-champana">
-            Categoria
-            <select value={categoriaFiltro} onChange={(event) => setCategoriaFiltro(event.target.value)} className="tap-target mt-2 w-full rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
-              <option value="">Todas</option>
-              {categorias.map((categoria) => <option key={categoria} value={categoria}>{categoria}</option>)}
-            </select>
-          </label>
-          <label className="mt-4 block text-sm font-bold text-champana">
-            Buscar producto
-            <input value={busqueda} onChange={(event) => setBusqueda(event.target.value)} placeholder="Escribe para filtrar" className="tap-target mt-2 w-full rounded-md border border-antiguo/20 bg-carbon px-3 text-crema placeholder:text-antiguo/50" />
-          </label>
-          <label className="mt-4 block text-sm font-bold text-champana">
-            Notas
-            <textarea value={notas} onChange={(event) => setNotas(event.target.value)} className="mt-2 min-h-24 w-full rounded-md border border-antiguo/20 bg-carbon p-3 text-crema" />
-          </label>
-          <div className="mt-5 rounded-md border border-oro/25 bg-carbon p-4">
-            <p className="text-sm text-antiguo/70">Total pedido</p>
-            <p className="mt-1 text-2xl font-black text-dorado">{formatoCOP(total)}</p>
+      <form onSubmit={enviarPedido} className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px] xl:items-start">
+        <section className="min-w-0">
+          <div className="rounded-lg border border-antiguo/15 bg-espresso p-3 shadow-suave">
+            <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-end">
+              <label className="block text-sm font-bold text-champana">
+                Mesa o zona
+                <select value={mesaId} onChange={(event) => setMesaId(event.target.value)} className="tap-target mt-1 w-full rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
+                  <option value="">Pedido directo</option>
+                  {mesas.map((mesa) => (
+                    <option key={mesa.id} value={mesa.id}>{mesa.nombre} - {mesa.zona}</option>
+                  ))}
+                </select>
+              </label>
+              <button type="button" onClick={() => setBusquedaAbierta((actual) => !actual)} className={busquedaAbierta || busqueda ? "tap-target rounded-md bg-oro px-4 text-sm font-black text-carbon" : "tap-target rounded-md border border-antiguo/20 bg-carbon px-4 text-sm font-bold text-crema"}>
+                Buscar
+              </button>
+              <div className="rounded-md border border-oro/20 bg-carbon px-4 py-2 text-right">
+                <p className="text-xs font-bold uppercase tracking-wide text-antiguo/60">{cantidadItems} items</p>
+                <p className="text-lg font-black text-dorado">{formatoCOP(total)}</p>
+              </div>
+            </div>
+
+            {busquedaAbierta ? (
+              <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_220px]">
+                <input value={busqueda} onChange={(event) => setBusqueda(event.target.value)} placeholder="Buscar producto" className="tap-target w-full rounded-md border border-antiguo/20 bg-carbon px-3 text-crema placeholder:text-antiguo/50" />
+                <select value={categoriaFiltro} onChange={(event) => setCategoriaFiltro(event.target.value)} className="tap-target w-full rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
+                  <option value="">Todas las categorias</option>
+                  {categorias.map((categoria) => <option key={categoria} value={categoria}>{categoria}</option>)}
+                </select>
+              </div>
+            ) : null}
           </div>
-          {mensaje ? <p className="mt-4 rounded-md border border-antiguo/15 bg-carbon p-3 text-sm">{mensaje}</p> : null}
-          <button disabled={enviando || total === 0} className="tap-target mt-4 w-full rounded-md bg-oro px-4 font-black text-carbon disabled:opacity-50">
+
+          <div className="mt-3 overflow-x-auto rounded-lg border border-antiguo/15 bg-carbon p-2">
+            <div className="flex min-w-max gap-2">
+              <button type="button" onClick={() => setCategoriaFiltro("")} className={!categoriaFiltro ? "tap-target rounded-md bg-oro px-4 text-sm font-black text-carbon" : "tap-target rounded-md border border-antiguo/15 bg-espresso px-4 text-sm font-bold text-crema"}>
+                Todos
+              </button>
+              {categorias.map((categoria) => (
+                <button key={categoria} type="button" onClick={() => setCategoriaFiltro(categoria)} className={categoriaFiltro === categoria ? "tap-target rounded-md bg-oro px-4 text-sm font-black text-carbon" : "tap-target rounded-md border border-antiguo/15 bg-espresso px-4 text-sm font-bold text-crema"}>
+                  {categoria}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-3 grid content-start gap-3 grid-cols-2 md:grid-cols-3 2xl:grid-cols-4">
+            {itemsFiltrados.map((item) => {
+              const cantidad = cantidades[item.clave] ?? 0;
+              const activo = itemActivo === item.clave || cantidad > 0;
+              return (
+                <article key={item.clave} className={activo ? "overflow-hidden rounded-lg border border-oro/45 bg-espresso shadow-suave" : "overflow-hidden rounded-lg border border-antiguo/15 bg-espresso shadow-suave"}>
+                  <button type="button" onClick={() => activarItem(item.clave)} className="block w-full p-2 text-left">
+                    <div className="aspect-[4/3] rounded-md bg-carbon p-2">
+                      <ImagenItemVenta url={item.imagen_url} nombre={item.nombre} />
+                    </div>
+                    <div className="min-h-[98px] pt-2">
+                      <p className="truncate text-[11px] font-bold uppercase tracking-wide text-oro">{nombreCategoria(item)}</p>
+                      <h2 className="mt-1 line-clamp-2 text-sm font-black text-crema sm:text-base">{item.nombre}</h2>
+                      <p className="mt-1 truncate text-xs text-antiguo/65">{item.tipo === "producto" ? item.presentacion_compra ?? "unidad" : "Combo"}</p>
+                      <p className="mt-1 text-base font-black text-dorado">{formatoCOP(item.precio_venta)}</p>
+                    </div>
+                  </button>
+                  {activo ? (
+                    <div className="grid grid-cols-[42px_1fr_42px] items-center gap-1 border-t border-antiguo/10 p-2">
+                      <button type="button" onClick={() => cambiarCantidad(item.clave, -1)} disabled={cantidad === 0} className="tap-target rounded-md border border-antiguo/20 bg-carbon text-xl disabled:opacity-40">-</button>
+                      <p className="text-center text-xl font-black text-dorado">{cantidad}</p>
+                      <button type="button" onClick={() => cambiarCantidad(item.clave, 1)} className="tap-target rounded-md border border-antiguo/20 bg-carbon text-xl">+</button>
+                    </div>
+                  ) : null}
+                </article>
+              );
+            })}
+          </div>
+        </section>
+
+        <aside className="rounded-lg border border-antiguo/15 bg-espresso p-3 shadow-suave xl:sticky xl:top-4">
+          <div className="flex items-center justify-between gap-3 border-b border-antiguo/15 pb-3">
+            <div>
+              <p className="text-sm font-bold uppercase tracking-wide text-oro">Detalle</p>
+              <h2 className="text-xl font-black text-crema">Pedido actual</h2>
+            </div>
+            {itemsSeleccionados.length > 0 ? (
+              <button type="button" onClick={() => { setCantidades({}); setItemActivo(null); }} className="rounded-md border border-red-300/30 px-2 py-1 text-xs font-bold text-red-100">Vaciar</button>
+            ) : null}
+          </div>
+
+          <div className="mt-3 max-h-[42vh] space-y-2 overflow-y-auto pr-1 xl:max-h-[48vh]">
+            {itemsSeleccionados.map(({ item, cantidad }) => (
+              <article key={item.clave} className="grid grid-cols-[48px_1fr] gap-2 rounded-md border border-antiguo/10 bg-carbon p-2">
+                <div className="h-12 w-12 rounded-md bg-espresso p-1">
+                  <ImagenItemVenta url={item.imagen_url} nombre={item.nombre} />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="min-w-0 text-sm font-bold text-crema">{item.nombre}</p>
+                    <button type="button" onClick={() => setCantidades((actual) => ({ ...actual, [item.clave]: 0 }))} className="shrink-0 rounded-md px-2 text-red-100">x</button>
+                  </div>
+                  <p className="text-xs text-antiguo/60">{formatoCOP(item.precio_venta)} c/u</p>
+                  <div className="mt-2 grid grid-cols-[36px_1fr_36px_auto] items-center gap-1">
+                    <button type="button" onClick={() => cambiarCantidad(item.clave, -1)} className="h-9 rounded-md border border-antiguo/20 bg-espresso text-lg">-</button>
+                    <p className="text-center font-black text-dorado">{cantidad}</p>
+                    <button type="button" onClick={() => cambiarCantidad(item.clave, 1)} className="h-9 rounded-md border border-antiguo/20 bg-espresso text-lg">+</button>
+                    <p className="pl-2 text-right text-sm font-black text-crema">{formatoCOP(cantidad * item.precio_venta)}</p>
+                  </div>
+                </div>
+              </article>
+            ))}
+            {itemsSeleccionados.length === 0 ? <p className="rounded-md border border-antiguo/10 bg-carbon p-5 text-center text-sm text-antiguo/70">Selecciona un producto para activar cantidades.</p> : null}
+          </div>
+
+          <label className="mt-3 block text-sm font-bold text-champana">
+            Notas
+            <textarea value={notas} onChange={(event) => setNotas(event.target.value)} className="mt-1 min-h-20 w-full rounded-md border border-antiguo/20 bg-carbon p-3 text-crema" />
+          </label>
+
+          <div className="mt-3 space-y-2 rounded-md border border-oro/20 bg-carbon p-3">
+            <div className="flex justify-between gap-3 text-sm text-antiguo/75">
+              <span>Items</span>
+              <span>{cantidadItems}</span>
+            </div>
+            <div className="flex justify-between gap-3 border-t border-antiguo/10 pt-2">
+              <span className="text-lg font-black text-crema">Total</span>
+              <span className="text-2xl font-black text-dorado">{formatoCOP(total)}</span>
+            </div>
+          </div>
+
+          {mensaje ? <p className="mt-3 rounded-md border border-antiguo/15 bg-carbon p-3 text-sm">{mensaje}</p> : null}
+          <button disabled={enviando || total === 0} className="tap-target mt-3 w-full rounded-md bg-oro px-4 font-black text-carbon disabled:opacity-50">
             {enviando ? "Enviando..." : "Enviar pedido"}
           </button>
         </aside>
-
-        <div className="grid content-start gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {itemsFiltrados.map((item) => {
-            const cantidad = cantidades[item.clave] ?? 0;
-            return (
-              <article key={item.clave} className="rounded-lg border border-antiguo/15 bg-espresso p-3 shadow-suave sm:p-4">
-                <p className="text-xs font-bold uppercase tracking-wide text-oro">{nombreCategoria(item)}</p>
-                <h2 className="mt-2 text-lg font-black text-crema">{nombreVisibleItem(item)}</h2>
-                <p className="mt-1 text-sm text-antiguo/70">{formatoCOP(item.precio_venta)}</p>
-                {item.tipo === "producto" ? <p className="mt-1 text-xs text-antiguo/50">Stock: {item.stock_actual ?? 0}</p> : null}
-                <div className="mt-4 grid grid-cols-[44px_1fr_44px] items-center gap-2">
-                  <button type="button" onClick={() => cambiarCantidad(item.clave, -1)} className="tap-target rounded-md border border-antiguo/20 bg-carbon text-xl">-</button>
-                  <p className="text-center text-2xl font-black text-dorado">{cantidad}</p>
-                  <button type="button" onClick={() => cambiarCantidad(item.clave, 1)} className="tap-target rounded-md border border-antiguo/20 bg-carbon text-xl">+</button>
-                </div>
-              </article>
-            );
-          })}
-        </div>
       </form>
 
       {itemsFiltrados.length === 0 ? <p className="rounded-md border border-antiguo/15 bg-espresso p-6 text-center text-sm text-antiguo/70">No hay productos para ese filtro.</p> : null}

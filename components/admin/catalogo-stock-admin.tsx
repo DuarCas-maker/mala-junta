@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { formatoCOP } from "@/lib/format";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 
@@ -12,6 +12,7 @@ type Producto = {
   precio_venta: number;
   costo_unitario_actual: number;
   codigo_interno: string | null;
+  imagen_url: string | null;
   stock_actual: number;
   stock_minimo: number;
   presentacion_compra: string;
@@ -31,7 +32,7 @@ type Proveedor = {
 };
 type Motivo = { id: string; texto: string };
 type ComboItem = { producto_id: string; cantidad: number; activo?: boolean; productos?: { nombre?: string } | null };
-type Combo = { id: string; nombre: string; precio_venta: number; activo: boolean; combo_items?: ComboItem[] };
+type Combo = { id: string; nombre: string; precio_venta: number; imagen_url: string | null; activo: boolean; combo_items?: ComboItem[] };
 type ItemStock = {
   orden_tipo: number;
   tipo_item: "producto" | "combo";
@@ -42,6 +43,7 @@ type ItemStock = {
   costo_estimado: number | null;
   stock_disponible: number | null;
   stock_minimo: number | null;
+  imagen_url: string | null;
   presentacion_compra: string | null;
   factor_compra: number | null;
   activo: boolean;
@@ -99,6 +101,7 @@ type ProveedorForm = { id: string | null; nombre: string; nit: string; contacto:
 const productoInicial: ProductoForm = { id: null, nombre: "", categoriaId: "", precio: "", costo: "", codigo: "", minimo: "0", presentacion: "unidad", factor: "1", activo: true };
 const comboInicial: ComboForm = { id: null, nombre: "", precio: "", items: [{ producto_id: "", cantidad: "1" }], activo: true };
 const proveedorInicial: ProveedorForm = { id: null, nombre: "", nit: "", contacto: "", telefono: "", correo: "", direccion: "", observacion: "", activo: true };
+const BUCKET_IMAGENES_CATALOGO = "catalogo-imagenes";
 
 function comboItems(combo: Combo) {
   return (combo.combo_items ?? [])
@@ -117,8 +120,26 @@ function normalizarTexto(valor: string) {
   return valor.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 }
 
+function extensionArchivo(nombre: string) {
+  const extension = nombre.split(".").pop()?.toLowerCase();
+  return extension ? `.${extension}` : ".jpg";
+}
+
 function fechaHoraCorta(fecha: string) {
   return new Date(fecha).toLocaleString("es-CO", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+function ImagenCatalogo({ url, nombre, className = "h-16 w-16" }: { url?: string | null; nombre: string; className?: string }) {
+  if (url) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={url} alt={nombre} className={`${className} rounded-md border border-antiguo/10 bg-espresso object-contain p-1`} loading="lazy" />;
+  }
+
+  return (
+    <div className={`${className} grid place-items-center rounded-md border border-antiguo/10 bg-espresso text-xs font-black uppercase text-oro/80`}>
+      {nombre.trim().slice(0, 2) || "MJ"}
+    </div>
+  );
 }
 
 function tipoMovimientoTexto(tipo: string) {
@@ -200,6 +221,7 @@ function construirItemsStockFallback(productos: Producto[], combos: Combo[], cat
     costo_estimado: Number(producto.costo_unitario_actual ?? 0),
     stock_disponible: Number(producto.stock_actual ?? 0),
     stock_minimo: Number(producto.stock_minimo ?? 0),
+    imagen_url: producto.imagen_url,
     presentacion_compra: producto.presentacion_compra,
     factor_compra: Number(producto.factor_compra ?? 1),
     activo: producto.activo,
@@ -236,6 +258,7 @@ function construirItemsStockFallback(productos: Producto[], combos: Combo[], cat
       stock_minimo: null,
       presentacion_compra: null,
       factor_compra: null,
+      imagen_url: combo.imagen_url,
       activo: combo.activo,
       componentes,
     };
@@ -285,6 +308,7 @@ export function CatalogoStockAdminPanel() {
   const [mensaje, setMensaje] = useState<string | null>(null);
   const [advertenciasCarga, setAdvertenciasCarga] = useState<CargaAdvertencia[]>([]);
   const [guardando, setGuardando] = useState(false);
+  const [imagenSubiendo, setImagenSubiendo] = useState<string | null>(null);
 
   const [categoriaNueva, setCategoriaNueva] = useState("");
   const [productoForm, setProductoForm] = useState<ProductoForm>(productoInicial);
@@ -312,11 +336,11 @@ export function CatalogoStockAdminPanel() {
   const cargar = useCallback(async () => {
     const supabase = supabaseBrowser();
     const [productosRes, categoriasRes, proveedoresRes, motivosRes, combosRes, itemsStockRes, movimientosRes, resumenInventarioRes] = await Promise.all([
-      supabase.from("productos").select("id,nombre,categoria_id,precio_venta,costo_unitario_actual,codigo_interno,stock_actual,stock_minimo,presentacion_compra,factor_compra,activo").order("nombre"),
+      supabase.from("productos").select("id,nombre,categoria_id,precio_venta,costo_unitario_actual,codigo_interno,imagen_url,stock_actual,stock_minimo,presentacion_compra,factor_compra,activo").order("nombre"),
       supabase.from("categorias").select("id,nombre").eq("activa", true).order("nombre"),
       supabase.from("proveedores").select("id,nombre,nit,contacto,telefono,correo,direccion,observacion,activo").order("nombre"),
       supabase.from("motivos").select("id,texto").eq("tipo", "ajuste_inventario").eq("activo", true).order("texto"),
-      supabase.from("combos").select("id,nombre,precio_venta,activo,combo_items(id,producto_id,cantidad,activo,productos(nombre))").order("nombre"),
+      supabase.from("combos").select("id,nombre,precio_venta,imagen_url,activo,combo_items(id,producto_id,cantidad,activo,productos(nombre))").order("nombre"),
       supabase.from("v_catalogo_items_stock").select("*").order("orden_tipo").order("nombre"),
       supabase.from("v_admin_historial_descuentos_item").select("*").order("timestamp", { ascending: false }).limit(150),
       supabase.from("v_admin_resumen_valor_inventario").select("*").maybeSingle(),
@@ -674,6 +698,54 @@ export function CatalogoStockAdminPanel() {
     setGuardando(false);
   }
 
+  async function subirImagenCatalogo(item: ItemStock, event: ChangeEvent<HTMLInputElement>) {
+    const archivo = event.target.files?.[0];
+    event.target.value = "";
+    if (!archivo) return;
+
+    setImagenSubiendo(item.item_id);
+    setMensaje(null);
+
+    try {
+      const supabase = supabaseBrowser();
+      const ruta = `${item.tipo_item}/${item.item_id}${extensionArchivo(archivo.name)}`;
+      const { error: uploadError } = await supabase.storage
+        .from(BUCKET_IMAGENES_CATALOGO)
+        .upload(ruta, archivo, {
+          cacheControl: "3600",
+          contentType: archivo.type || undefined,
+          upsert: true,
+        });
+
+      if (uploadError) throw new Error(uploadError.message);
+
+      const { data } = supabase.storage.from(BUCKET_IMAGENES_CATALOGO).getPublicUrl(ruta);
+      const { error: rpcError } = await supabase.rpc("guardar_imagen_catalogo", {
+        p_tipo: item.tipo_item,
+        p_item_id: item.item_id,
+        p_imagen_url: data.publicUrl,
+      });
+
+      if (rpcError) throw new Error(rpcError.message);
+      setMensaje("Imagen actualizada.");
+      await cargar();
+    } catch (error) {
+      setMensaje(error instanceof Error ? error.message : "No se pudo subir la imagen.");
+    } finally {
+      setImagenSubiendo(null);
+    }
+  }
+
+  function ControlImagenCatalogo({ item, compacto = false }: { item: ItemStock; compacto?: boolean }) {
+    const subiendo = imagenSubiendo === item.item_id;
+    return (
+      <label className={compacto ? "tap-target inline-flex cursor-pointer items-center rounded-md border border-antiguo/20 px-3 text-xs font-bold" : "inline-flex cursor-pointer items-center rounded-md border border-antiguo/20 px-2 py-1 text-xs font-bold"}>
+        {subiendo ? "Subiendo..." : "Imagen"}
+        <input type="file" accept="image/*" className="hidden" disabled={subiendo} onChange={(event) => subirImagenCatalogo(item, event)} />
+      </label>
+    );
+  }
+
 
   return (
     <section className="grid gap-5">
@@ -770,6 +842,7 @@ export function CatalogoStockAdminPanel() {
             return (
               <article key={`${item.tipo_item}-${item.item_id}`} className="rounded-md border border-antiguo/10 bg-carbon p-3">
                 <div className="flex items-start justify-between gap-3">
+                  <ImagenCatalogo url={item.imagen_url} nombre={item.nombre} />
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-bold uppercase tracking-wide text-oro">{item.tipo_item === "producto" ? "Producto" : "Combo"}</p>
                     {editandoStock ? (
@@ -819,6 +892,7 @@ export function CatalogoStockAdminPanel() {
                     </>
                   ) : null}
                   {!editandoStock ? <button onClick={() => iniciarEdicionStock(item)} className="tap-target rounded-md border border-antiguo/20 px-3 text-xs font-bold">Editar</button> : null}
+                  {!editandoStock ? <ControlImagenCatalogo item={item} compacto /> : null}
                   {producto && !editandoStock ? <button onClick={() => cambiarEstadoProducto(producto, !producto.activo, Number(item.costo_estimado ?? 0))} className={producto.activo ? "tap-target rounded-md border border-red-300/30 px-3 text-xs font-bold text-red-100" : "tap-target rounded-md border border-green-300/30 px-3 text-xs font-bold text-green-100"}>{producto.activo ? "Eliminar" : "Reactivar"}</button> : null}
                   {combo && !editandoStock ? <button onClick={() => editarCombo(combo)} className="tap-target rounded-md border border-antiguo/20 px-3 text-xs font-bold">Componentes</button> : null}
                   {combo && !editandoStock ? <button onClick={() => cambiarEstadoCombo(combo, !combo.activo)} className={combo.activo ? "tap-target rounded-md border border-red-300/30 px-3 text-xs font-bold text-red-100" : "tap-target rounded-md border border-green-300/30 px-3 text-xs font-bold text-green-100"}>{combo.activo ? "Eliminar" : "Reactivar"}</button> : null}
@@ -830,9 +904,10 @@ export function CatalogoStockAdminPanel() {
         </div>
 
         <div className="mt-3 hidden overflow-x-auto lg:block">
-          <table className="w-full min-w-[1080px] text-left text-sm">
+          <table className="w-full min-w-[1160px] text-left text-sm">
             <thead className="text-antiguo/70">
               <tr className="border-b border-antiguo/15">
+                <th className="py-2 pr-3">Imagen</th>
                 <th className="py-2 pr-3">Tipo</th>
                 <th className="py-2 pr-3">Item</th>
                 <th className="py-2 pr-3">Categoria</th>
@@ -852,6 +927,12 @@ export function CatalogoStockAdminPanel() {
                 const editandoStock = stockEditando === item.item_id;
                 return (
                   <tr key={`${item.tipo_item}-${item.item_id}`} className="border-b border-antiguo/10 align-top">
+                    <td className="py-3 pr-3">
+                      <div className="flex items-center gap-2">
+                        <ImagenCatalogo url={item.imagen_url} nombre={item.nombre} className="h-14 w-14" />
+                        {!editandoStock ? <ControlImagenCatalogo item={item} /> : null}
+                      </div>
+                    </td>
                     <td className="py-3 pr-3 font-bold text-dorado">{item.tipo_item === "producto" ? "Producto" : "Combo"}</td>
                     <td className="py-3 pr-3 font-bold text-crema">{editandoStock ? <input value={stockInline[item.item_id]?.nombre ?? item.nombre} onChange={(event) => setStockInline((actual) => ({ ...actual, [item.item_id]: { ...(actual[item.item_id] ?? { precio: String(item.precio_venta ?? 0), costo: String(item.costo_estimado ?? 0), stock: String(item.stock_disponible ?? 0), minimo: String(item.stock_minimo ?? 0) }), nombre: event.target.value } }))} className="tap-target w-56 rounded-md border border-antiguo/20 bg-carbon px-2 text-crema" /> : item.nombre}</td>
                     <td className="py-3 pr-3">{item.categoria ?? "-"}</td>
