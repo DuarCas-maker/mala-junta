@@ -359,7 +359,7 @@ export function CapturasCompraAdminPanel() {
       );
       setImagenes(Object.fromEntries(firmadas));
     } catch (err) {
-      setMensaje(err instanceof Error ? err.message : "No se pudo cargar solicitudes de compra.");
+      setMensaje(err instanceof Error ? err.message : "No se pudo cargar solicitudes de inventario.");
     } finally {
       setCargando(false);
     }
@@ -536,7 +536,7 @@ export function CapturasCompraAdminPanel() {
       return false;
     }
     if (lineas.length === 0) {
-      setMensaje("La solicitud debe tener al menos una linea para guardar revision.");
+      setMensaje("La solicitud de inventario debe tener al menos una linea para guardar revision.");
       return false;
     }
 
@@ -591,7 +591,7 @@ export function CapturasCompraAdminPanel() {
       if (error) throw new Error(error.message);
 
       setLineasEliminadas((actual) => ({ ...actual, [captura.id]: [] }));
-      if (!opciones.silencioso) setMensaje("Revision de compra guardada.");
+      if (!opciones.silencioso) setMensaje("Revision de inventario guardada.");
       await cargar();
       return true;
     } catch (err) {
@@ -609,10 +609,10 @@ export function CapturasCompraAdminPanel() {
       return suma + recalcularLinea(linea, producto).subtotal_costo;
     }, 0);
     if (!captura.proveedor_id || !captura.fecha_ingreso || !lineasListasParaAprobar(lineas, productos)) {
-      setMensaje("Completa proveedor, fecha, productos, cantidades y confirma costo/precio antes de aprobar.");
+      setMensaje("Completa proveedor, fecha, productos, cantidades y confirma costo/precio antes de ingresar inventario.");
       return;
     }
-    if (!window.confirm(`Aprobar esta compra por ${formatoCOP(totalActual)} e ingresar el inventario?`)) return;
+    if (!window.confirm(`Ingresar este inventario por ${formatoCOP(totalActual)}?`)) return;
 
     const revisionGuardada = await guardarRevision(captura, { silencioso: true });
     if (!revisionGuardada) return;
@@ -625,10 +625,10 @@ export function CapturasCompraAdminPanel() {
       if (error) throw new Error(error.message);
 
       const resultado = data as AprobarCompraResultado | null;
-      setMensaje(`Compra aprobada. Items: ${resultado?.items_confirmados ?? lineas.length}. Total: ${formatoCOP(Number(resultado?.total ?? totalActual))}.`);
+      setMensaje(`Inventario ingresado. Items: ${resultado?.items_confirmados ?? lineas.length}. Total: ${formatoCOP(Number(resultado?.total ?? totalActual))}.`);
       await cargar();
     } catch (err) {
-      setMensaje(err instanceof Error ? err.message : "No se pudo aprobar la compra.");
+      setMensaje(err instanceof Error ? err.message : "No se pudo ingresar el inventario.");
     } finally {
       setGuardando(false);
     }
@@ -636,11 +636,11 @@ export function CapturasCompraAdminPanel() {
 
   async function rechazarCaptura(captura: CapturaCompraResumen) {
     if (!capturaRechazable(captura)) {
-      setMensaje("Esta solicitud ya esta confirmada o cerrada.");
+      setMensaje("Esta solicitud de inventario ya esta confirmada o cerrada.");
       return;
     }
 
-    const motivo = window.prompt("Motivo del rechazo de esta solicitud de compra:");
+    const motivo = window.prompt("Motivo del rechazo de esta solicitud de inventario:");
     if (motivo === null) return;
     if (motivo.trim().length < 3) {
       setMensaje("Escribe un motivo de rechazo de al menos 3 caracteres.");
@@ -697,21 +697,21 @@ export function CapturasCompraAdminPanel() {
       formData.append("fecha_ingreso", fechaIngreso);
       formData.append("observacion", observacion);
 
-      const response = await fetch("/api/capturas/compras/procesar", {
+      const response = await fetch("/api/capturas/inventario/procesar", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
         body: formData,
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error ?? "No se pudo procesar la factura.");
+      if (!response.ok) throw new Error(data.error ?? "No se pudo procesar la factura de inventario.");
 
       const lineas = Number((data as { lineas?: unknown[] }).lineas?.length ?? 0);
-      setMensaje(`Factura procesada. Se detectaron ${lineas} item(s) para revision.`);
+      setMensaje(`Factura de inventario procesada. Se detectaron ${lineas} item(s) para revision.`);
       setFoto(null);
       setObservacion("");
       await cargar();
     } catch (err) {
-      setMensaje(err instanceof Error ? err.message : "No se pudo procesar la factura.");
+      setMensaje(err instanceof Error ? err.message : "No se pudo procesar la factura de inventario.");
     } finally {
       setGuardando(false);
     }
@@ -729,15 +729,15 @@ export function CapturasCompraAdminPanel() {
       <div className="rounded-lg border border-antiguo/15 bg-espresso p-3 shadow-suave sm:p-4">
         <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <h3 className="text-lg font-black text-crema">Registro de compras por OCR</h3>
-            <p className="text-sm text-antiguo/65">La IA lee nombre y cantidad; costo, precio y stock salen del catalogo.</p>
+            <h3 className="text-lg font-black text-crema">Entrada de inventario por OCR</h3>
+            <p className="text-sm text-antiguo/65">La IA lee facturas de compra; costo, precio y stock salen del catalogo.</p>
           </div>
           <button type="button" onClick={() => void cargar()} className="tap-target rounded-md border border-antiguo/20 px-3 text-sm font-bold text-crema">Actualizar</button>
         </div>
 
         <form onSubmit={procesarCaptura} className="mt-4 grid gap-3 lg:grid-cols-[260px_1fr]">
           <div className="flex min-h-52 flex-col items-center justify-center rounded-md border border-dashed border-antiguo/25 bg-carbon p-3 text-center text-sm text-antiguo/70">
-            {previewUrl ? <Image src={previewUrl} alt="Factura seleccionada" width={640} height={480} unoptimized className="max-h-72 w-full rounded-md object-contain" /> : <span>Factura de compra</span>}
+            {previewUrl ? <Image src={previewUrl} alt="Factura de inventario seleccionada" width={640} height={480} unoptimized className="max-h-72 w-full rounded-md object-contain" /> : <span>Factura de inventario</span>}
             <input ref={camaraInputRef} type="file" accept="image/*" capture="environment" className="sr-only" onChange={(event) => { seleccionarArchivo(event.target.files?.[0] ?? null); event.target.value = ""; }} />
             <input ref={galeriaInputRef} type="file" accept="image/*" className="sr-only" onChange={(event) => { seleccionarArchivo(event.target.files?.[0] ?? null); event.target.value = ""; }} />
           </div>
@@ -758,7 +758,7 @@ export function CapturasCompraAdminPanel() {
             <div className="grid gap-2 sm:grid-cols-4">
               <button type="button" onClick={() => camaraInputRef.current?.click()} className="tap-target rounded-md border border-antiguo/20 px-4 text-sm font-bold">Tomar foto</button>
               <button type="button" onClick={() => galeriaInputRef.current?.click()} className="tap-target rounded-md border border-antiguo/20 px-4 text-sm font-bold">Subir galeria</button>
-              <button type="submit" disabled={guardando || !foto || !proveedorId || !fechaIngreso} className="tap-target rounded-md bg-oro px-4 text-sm font-black text-carbon disabled:opacity-50">{guardando ? "Procesando..." : "Procesar OCR"}</button>
+              <button type="submit" disabled={guardando || !foto || !proveedorId || !fechaIngreso} className="tap-target rounded-md bg-oro px-4 text-sm font-black text-carbon disabled:opacity-50">{guardando ? "Procesando..." : "Procesar OCR inventario"}</button>
               <button type="button" onClick={() => seleccionarArchivo(null)} className="tap-target rounded-md border border-antiguo/20 px-4 text-sm font-bold">Limpiar</button>
             </div>
           </div>
@@ -770,7 +770,7 @@ export function CapturasCompraAdminPanel() {
       <section className="rounded-lg border border-antiguo/15 bg-espresso p-3 shadow-suave sm:p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h3 className="text-lg font-black text-crema">Solicitudes de compra</h3>
+            <h3 className="text-lg font-black text-crema">Solicitudes de inventario</h3>
             <p className="text-sm text-antiguo/65">{cargando ? "Cargando..." : `${capturasVisibles.length} de ${resumen.total} registro(s)`}</p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -781,7 +781,7 @@ export function CapturasCompraAdminPanel() {
         </div>
 
         <div className="mt-4 grid gap-2 border-t border-antiguo/10 pt-3 md:grid-cols-[minmax(0,1fr)_150px_150px_180px_auto]">
-          <input value={busqueda} onChange={(event) => setBusqueda(event.target.value)} placeholder="Buscar producto, proveedor, compra o archivo" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema placeholder:text-antiguo/50" />
+          <input value={busqueda} onChange={(event) => setBusqueda(event.target.value)} placeholder="Buscar producto, proveedor, entrada o archivo" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema placeholder:text-antiguo/50" />
           <input type="date" value={fechaDesde} onChange={(event) => setFechaDesde(event.target.value)} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
           <input type="date" value={fechaHasta} onChange={(event) => setFechaHasta(event.target.value)} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
           <select value={proveedorFiltro} onChange={(event) => setProveedorFiltro(event.target.value)} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
@@ -792,8 +792,8 @@ export function CapturasCompraAdminPanel() {
         </div>
 
         <div className="mt-4 space-y-3">
-          {cargando ? <p className="rounded-md border border-antiguo/10 bg-carbon p-4 text-center text-sm text-antiguo/70">Cargando compras...</p> : null}
-          {!cargando && capturasVisibles.length === 0 ? <p className="rounded-md border border-antiguo/10 bg-carbon p-4 text-center text-sm text-antiguo/70">No hay solicitudes de compra para este filtro.</p> : null}
+          {cargando ? <p className="rounded-md border border-antiguo/10 bg-carbon p-4 text-center text-sm text-antiguo/70">Cargando inventario...</p> : null}
+          {!cargando && capturasVisibles.length === 0 ? <p className="rounded-md border border-antiguo/10 bg-carbon p-4 text-center text-sm text-antiguo/70">No hay solicitudes de inventario para este filtro.</p> : null}
           {capturasVisibles.map((captura) => {
             const estado = estadoCompra(captura.estado);
             const imagenUrl = imagenes[captura.id];
@@ -805,7 +805,7 @@ export function CapturasCompraAdminPanel() {
               <article key={captura.id} className="rounded-md border border-antiguo/15 bg-carbon p-3">
                 <div className="grid gap-3 sm:grid-cols-[96px_1fr_auto] sm:items-center">
                   <div className="flex h-20 w-full items-center justify-center overflow-hidden rounded-md border border-antiguo/10 bg-espresso sm:w-24">
-                    {imagenUrl ? <Image src={imagenUrl} alt="Factura de compra" width={160} height={120} unoptimized className="h-full w-full object-cover" /> : <span className="text-xs text-antiguo/50">Sin imagen</span>}
+                    {imagenUrl ? <Image src={imagenUrl} alt="Factura de inventario" width={160} height={120} unoptimized className="h-full w-full object-cover" /> : <span className="text-xs text-antiguo/50">Sin imagen</span>}
                   </div>
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
@@ -819,14 +819,14 @@ export function CapturasCompraAdminPanel() {
                       <MiniDato etiqueta="Pend." valor={captura.items_pendientes} />
                       <MiniDato etiqueta="Unid." valor={captura.unidades_total} />
                       <MiniDato etiqueta="Costo" valor={formatoCOP(captura.costo_total)} />
-                      <MiniDato etiqueta="Compra" valor={codigoCorto(captura.compra_id)} />
+                      <MiniDato etiqueta="Entrada" valor={codigoCorto(captura.compra_id)} />
                     </div>
                   </div>
                   <div className="grid gap-2">
                     <span className="rounded-md border border-antiguo/15 px-3 py-2 text-center text-xs font-bold text-antiguo/80">{lineas.length > 0 ? "Rectificacion" : "Sin items"}</span>
                     <button type="button" onClick={() => agregarLinea(captura)} disabled={!editable} className="tap-target rounded-md border border-white/35 px-3 text-xs font-bold text-white disabled:opacity-50">Agregar linea</button>
                     <button type="button" onClick={() => void guardarRevision(captura)} disabled={!editable || lineas.length === 0} className="tap-target rounded-md bg-oro px-3 text-xs font-black text-carbon disabled:opacity-50">Guardar revision</button>
-                    <button type="button" onClick={() => void aprobarCaptura(captura)} disabled={!puedeAprobar} className="tap-target rounded-md bg-green-200 px-3 text-xs font-black text-green-950 disabled:opacity-50">Aprobar compra</button>
+                    <button type="button" onClick={() => void aprobarCaptura(captura)} disabled={!puedeAprobar} className="tap-target rounded-md bg-green-200 px-3 text-xs font-black text-green-950 disabled:opacity-50">Ingresar inventario</button>
                     <button type="button" onClick={() => void rechazarCaptura(captura)} disabled={!rechazable} className="tap-target rounded-md border border-red-300/40 px-3 text-xs font-bold text-red-100 disabled:opacity-50">Rechazar</button>
                   </div>
                 </div>

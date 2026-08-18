@@ -261,7 +261,7 @@ function crearPrompt(catalogo: CatalogoProducto[], proveedorNombre: string) {
     .map((item) => `- ${item.nombre} | presentacion ${item.presentacion_compra} | factor ${item.factor_compra} | codigo ${item.codigo_interno ?? "sin codigo"} | categoria ${item.categoria ?? "sin categoria"}`)
     .join("\n");
 
-  return `Lee una foto real de una factura de compra o pedido recibido para Mala Junta.
+  return `Lee una foto real de una factura, recibo POS, remision o pedido recibido para entrada de inventario de Mala Junta.
 
 Proveedor esperado seleccionado por el admin: ${proveedorNombre}
 
@@ -269,17 +269,23 @@ Objetivo:
 - Extrae solo los productos comprados y sus cantidades.
 - No inventes costos ni precios: esos valores salen de la base de datos, no de la factura.
 - Si ves valores monetarios, puedes usarlos solo para total_detectado u observaciones.
+- Esta captura es de inventario comprado. No la trates como venta al cliente, pedido de mesa, pago de caja ni cierre de caja.
 
 Reglas criticas:
 - Devuelve solo el JSON solicitado.
 - Cada renglon de producto debe ser un item independiente.
 - producto_detectado debe ser el nombre leido o la mejor descripcion visible.
-- cantidad debe ser el numero de unidades o presentaciones compradas.
-- modo_sugerido debe ser "presentacion" si el renglon habla de caja, paquete, paca, canasta, display, six pack, docena, botella/caja u otra presentacion de compra completa.
+- cantidad debe ser la cantidad comprada del renglon, tomada de columnas como Cant, Cantidad, C, CJ, UN, U, Cajas, Unidades o de texto cercano al producto.
+- modo_sugerido debe ser "presentacion" si el renglon habla de caja, paquete, paca, canasta, display, six pack, docena, botella/caja, caja x24, lata x6, cj, cajas u otra presentacion de compra completa.
 - modo_sugerido debe ser "unidades" si el renglon habla de unidades sueltas.
 - Si no estas seguro del modo, usa "unidades" y baja la confianza.
 - presentacion_detectada debe conservar el texto de presentacion visible, o "" si no aparece.
 - Conserva el texto original de cada renglon.
+- Las fotos pueden estar rotadas, inclinadas, cortadas o ser recibos largos; lee la tabla aunque el documento este de lado.
+- Ignora NIT, datos del cliente, forma de pago, efectivo, cambio, domicilio, impuestos, IVA, INC, subtotal, QR, CUFE, codigo de barras, resoluciones DIAN, texto legal y totales que no sean productos.
+- En facturas con columnas Cant / Descripcion / Precio unitario / IVA / Total, solo extrae filas de productos.
+- En recibos termicos, no confundas "Valor a pagar", "Total", "Efectivo", "Cambio" o "Forma de pago" con productos.
+- Si una linea describe un producto y abajo aparece su cantidad/precio, combina esa informacion en un solo item.
 
 Productos activos de la base de datos:
 ${productosTexto}`;

@@ -14,11 +14,11 @@ import { supabaseBrowser } from "@/lib/supabase-browser";
 
 type Estado = "idle" | "cargando" | "guardando";
 type ModuloAdmin = "metricas" | "solicitudes" | "catalogo" | "auditoria" | "mesas" | "usuarios";
-type SolicitudesTab = "ventas" | "compras";
+type SolicitudesTab = "ventas" | "inventario";
 
 const modulosAdmin: { id: ModuloAdmin; titulo: string; detalle: string }[] = [
   { id: "metricas", titulo: "Metricas", detalle: "Ventas, margen y caja" },
-  { id: "solicitudes", titulo: "Solicitudes", detalle: "Aprobacion de capturas" },
+  { id: "solicitudes", titulo: "Solicitudes", detalle: "Ventas e inventario OCR" },
   { id: "catalogo", titulo: "Catalogo y stock", detalle: "Productos, compras y combos" },
   { id: "auditoria", titulo: "Auditoria", detalle: "Conteos y diferencias" },
   { id: "mesas", titulo: "Mesas", detalle: "Cantidad visible en pedidos" },
@@ -251,14 +251,14 @@ function SolicitudesAdminPanel({ tab, setTab }: { tab: SolicitudesTab; setTab: (
   return (
     <section className="space-y-4">
       <div className="flex flex-wrap gap-2 rounded-lg border border-antiguo/15 bg-espresso p-2 shadow-suave">
-        {(["ventas", "compras"] as SolicitudesTab[]).map((opcion) => (
+        {(["ventas", "inventario"] as SolicitudesTab[]).map((opcion) => (
           <button
             key={opcion}
             type="button"
             onClick={() => setTab(opcion)}
             className={tab === opcion ? "tap-target rounded-md bg-oro px-4 text-sm font-black text-carbon" : "tap-target rounded-md border border-antiguo/20 bg-carbon px-4 text-sm font-bold text-crema"}
           >
-            {opcion === "ventas" ? "Ventas" : "Compras"}
+            {opcion === "ventas" ? "Ventas" : "Inventario"}
           </button>
         ))}
       </div>
