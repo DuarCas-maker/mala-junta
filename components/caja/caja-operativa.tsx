@@ -117,7 +117,9 @@ function totalPagado(cuenta: Cuenta) {
 
 function nombreMesa(cuenta: Cuenta) {
   const mesa = Array.isArray(cuenta.mesas) ? cuenta.mesas[0] : cuenta.mesas;
-  return mesa ? `${mesa.nombre} - ${mesa.zona}` : "Pedido directo";
+  const base = mesa ? `${mesa.nombre} - ${mesa.zona}` : "Pedido directo";
+  const nickname = String(cuenta.nickname ?? "").trim();
+  return nickname ? `${base} - ${nickname}` : base;
 }
 
 function meseroPedido(pedido: any) {
@@ -130,13 +132,15 @@ function nombreMedio(medio: string) {
 }
 
 function totalPedido(pedido: PedidoHistorial) {
-  return (pedido.pedido_items ?? []).reduce((sum: number, item: any) => sum + Number(item.cantidad ?? 0) * Number(item.precio_unitario_capturado ?? 0), 0);
+  return itemsPedido(pedido).reduce((sum: number, item: any) => sum + Number(item.cantidad ?? 0) * Number(item.precio_unitario_capturado ?? 0), 0);
 }
 
 function cuentaPedido(pedido: PedidoHistorial) {
   const cuenta = Array.isArray(pedido.cuentas) ? pedido.cuentas[0] : pedido.cuentas;
   const mesa = Array.isArray(cuenta?.mesas) ? cuenta.mesas[0] : cuenta?.mesas;
-  return mesa ? `${mesa.nombre} - ${mesa.zona}` : "Pedido directo";
+  const base = mesa ? `${mesa.nombre} - ${mesa.zona}` : "Pedido directo";
+  const nickname = String(cuenta?.nickname ?? "").trim();
+  return nickname ? `${base} - ${nickname}` : base;
 }
 
 function fechaPedido(fecha?: string) {
@@ -158,6 +162,10 @@ function fechaLocalISO(fecha?: string | Date) {
 
 function pedidosCuenta(cuenta: Cuenta) {
   return Array.isArray(cuenta.pedidos) ? cuenta.pedidos : [];
+}
+
+function itemsPedido(pedido: PedidoHistorial) {
+  return Array.isArray(pedido.pedido_items) ? pedido.pedido_items.filter((item: any) => item.estado !== "anulado") : [];
 }
 
 function fechaPrincipalCuenta(cuenta: Cuenta) {
@@ -203,6 +211,7 @@ export function CajaOperativa() {
   const [envioDestinos, setEnvioDestinos] = useState<Record<string, string>>({});
   const [motivoPorPedido, setMotivoPorPedido] = useState<Record<string, string>>({});
   const [observacionPorPedido, setObservacionPorPedido] = useState<Record<string, string>>({});
+  const [cantidadesEditadas, setCantidadesEditadas] = useState<Record<string, string>>({});
   const [requiereAperturaCaja, setRequiereAperturaCaja] = useState(false);
   const [filtroFechaCobros, setFiltroFechaCobros] = useState<FiltroFechaCobros>("hoy");
 
@@ -216,7 +225,7 @@ export function CajaOperativa() {
       supabase.rpc("cuentas_activas_caja"),
       supabase
         .from("pedidos")
-        .select("id,estado,enviado_at,notas,mesero:perfiles!pedidos_mesero_id_fkey(nombre),cuentas(id,estado,total_cuenta,responsable_pendiente,mesas(nombre,zona)),pedido_items(id,cantidad,precio_unitario_capturado,productos(nombre),combos(nombre))")
+        .select("id,estado,enviado_at,notas,mesero:perfiles!pedidos_mesero_id_fkey(nombre),cuentas(id,estado,total_cuenta,responsable_pendiente,nickname,mesas(nombre,zona)),pedido_items(id,cantidad,estado,precio_unitario_capturado,productos(nombre),combos(nombre))")
         .neq("estado", "anulado")
         .order("enviado_at", { ascending: false })
         .limit(80),
@@ -328,6 +337,44 @@ export function CajaOperativa() {
 
     if (rpcError) setMensaje(rpcError.message === "caja_no_abierta" ? "Debes abrir caja antes de registrar pagos." : rpcError.message);
     else setMensaje("Pedido anulado con motivo.");
+    setProcesando(null);
+    await cargar();
+  }
+
+  function valorCantidadEditada(item: any) {
+    return cantidadesEditadas[item.id] ?? String(item.cantidad ?? 0);
+  }
+
+  function cambiarCantidadEditada(item: any, delta: number) {
+    const actual = Number(valorCantidadEditada(item));
+    const siguiente = Math.max(0, Math.min(200, (Number.isFinite(actual) ? actual : Number(item.cantidad ?? 0)) + delta));
+    setCantidadesEditadas((valores) => ({ ...valores, [item.id]: String(siguiente) }));
+  }
+
+  async function guardarCantidadItem(item: any) {
+    const cantidad = Number(valorCantidadEditada(item));
+    if (!Number.isInteger(cantidad) || cantidad < 0 || cantidad > 200) {
+      setMensaje("La cantidad debe ser un numero entre 0 y 200.");
+      return;
+    }
+
+    setMensaje(null);
+    setProcesando(item.id);
+    const supabase = supabaseBrowser();
+    const { error: rpcError } = await supabase.rpc("editar_pedido_item_caja", {
+      p_pedido_item_id: item.id,
+      p_cantidad: cantidad,
+    });
+
+    if (rpcError) setMensaje(rpcError.message === "stock_insuficiente" ? "No hay stock suficiente para subir esa cantidad." : rpcError.message);
+    else {
+      setMensaje(cantidad === 0 ? "Item anulado y cuenta recalculada." : "Cantidad actualizada y cuenta recalculada.");
+      setCantidadesEditadas((valores) => {
+        const siguientes = { ...valores };
+        delete siguientes[item.id];
+        return siguientes;
+      });
+    }
     setProcesando(null);
     await cargar();
   }
@@ -510,12 +557,31 @@ export function CajaOperativa() {
                       </div>
 
                       <ul className="mt-3 space-y-2 text-sm">
-                        {(pedido.pedido_items ?? []).map((item: any) => (
-                          <li key={item.id} className="flex flex-wrap justify-between gap-x-3 gap-y-1 border-t border-antiguo/10 pt-2">
-                            <span>{item.cantidad} x {item.productos?.nombre ?? item.combos?.nombre}</span>
-                            <span>{formatoCOP(Number(item.cantidad) * Number(item.precio_unitario_capturado))}</span>
+                        {itemsPedido(pedido).map((item: any) => {
+                          const valorEditado = valorCantidadEditada(item);
+                          const cantidadEditada = Number(valorEditado);
+                          const cambioPendiente = Number.isInteger(cantidadEditada) && cantidadEditada !== Number(item.cantidad ?? 0);
+
+                          return (
+                          <li key={item.id} className="grid gap-2 border-t border-antiguo/10 pt-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                            <div className="min-w-0">
+                              <p className="font-bold text-crema">{item.cantidad} x {item.productos?.nombre ?? item.combos?.nombre}</p>
+                              <p className="text-xs text-antiguo/60">{formatoCOP(Number(item.cantidad) * Number(item.precio_unitario_capturado))}</p>
+                            </div>
+                            <div className="grid grid-cols-[34px_54px_34px_auto] items-center gap-1">
+                              <button type="button" onClick={() => cambiarCantidadEditada(item, -1)} disabled={procesando === item.id} className="h-9 rounded-md border border-antiguo/20 bg-espresso text-lg font-black disabled:opacity-40">-</button>
+                              <input
+                                value={valorEditado}
+                                onChange={(event) => setCantidadesEditadas((valores) => ({ ...valores, [item.id]: event.target.value.replace(/\D/g, "").slice(0, 3) }))}
+                                inputMode="numeric"
+                                className="h-9 rounded-md border border-antiguo/20 bg-espresso px-2 text-center font-black text-crema"
+                              />
+                              <button type="button" onClick={() => cambiarCantidadEditada(item, 1)} disabled={procesando === item.id} className="h-9 rounded-md border border-antiguo/20 bg-espresso text-lg font-black disabled:opacity-40">+</button>
+                              <button type="button" onClick={() => guardarCantidadItem(item)} disabled={procesando === item.id || !cambioPendiente} className="h-9 rounded-md bg-oro px-3 text-xs font-black text-carbon disabled:opacity-40">Guardar</button>
+                            </div>
                           </li>
-                        ))}
+                          );
+                        })}
                       </ul>
 
                       {pedido.estado !== "anulado" ? (
@@ -647,7 +713,7 @@ export function CajaOperativa() {
                 </div>
                 {pedido.notas ? <p className="mt-2 text-sm text-antiguo/75">{pedido.notas}</p> : null}
                 <ul className="mt-3 space-y-2 text-sm">
-                  {(pedido.pedido_items ?? []).map((item: any) => (
+                  {itemsPedido(pedido).map((item: any) => (
                     <li key={item.id} className="flex flex-wrap justify-between gap-x-3 gap-y-1 border-t border-antiguo/10 pt-2">
                       <span>{item.cantidad} x {item.productos?.nombre ?? item.combos?.nombre}</span>
                       <span className="font-bold text-dorado">{formatoCOP(Number(item.cantidad) * Number(item.precio_unitario_capturado))}</span>

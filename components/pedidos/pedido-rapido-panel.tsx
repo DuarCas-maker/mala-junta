@@ -22,7 +22,7 @@ type ItemVenta = {
 };
 type Cantidades = Record<string, number>;
 type PedidoItemPayload = { producto_id?: string; combo_id?: string; cantidad: number };
-type PedidoPendiente = { id: string; mesaId: string; items: PedidoItemPayload[]; notas: string; creado: string };
+type PedidoPendiente = { id: string; mesaId: string; items: PedidoItemPayload[]; notas: string; nickname: string; creado: string };
 type PedidoHistorial = any;
 
 type Props = {
@@ -78,14 +78,20 @@ function guardarPendientes(pedidos: PedidoPendiente[]) {
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(pedidos));
 }
 
+function itemsPedido(pedido: PedidoHistorial) {
+  return Array.isArray(pedido.pedido_items) ? pedido.pedido_items.filter((item: any) => item.estado !== "anulado") : [];
+}
+
 function totalPedido(pedido: PedidoHistorial) {
-  return (pedido.pedido_items ?? []).reduce((sum: number, item: any) => sum + Number(item.cantidad ?? 0) * Number(item.precio_unitario_capturado ?? 0), 0);
+  return itemsPedido(pedido).reduce((sum: number, item: any) => sum + Number(item.cantidad ?? 0) * Number(item.precio_unitario_capturado ?? 0), 0);
 }
 
 function nombreCuentaPedido(pedido: PedidoHistorial) {
   const cuenta = Array.isArray(pedido.cuentas) ? pedido.cuentas[0] : pedido.cuentas;
   const mesa = Array.isArray(cuenta?.mesas) ? cuenta.mesas[0] : cuenta?.mesas;
-  return mesa ? `${mesa.nombre} - ${mesa.zona}` : "Pedido directo";
+  const base = mesa ? `${mesa.nombre} - ${mesa.zona}` : "Pedido directo";
+  const nickname = String(cuenta?.nickname ?? "").trim();
+  return nickname ? `${base} - ${nickname}` : base;
 }
 
 function fechaPedido(fecha?: string) {
@@ -135,6 +141,7 @@ export function PedidoRapidoPanel({
   const [mesas, setMesas] = useState<Mesa[]>([]);
   const [itemsVenta, setItemsVenta] = useState<ItemVenta[]>([]);
   const [mesaId, setMesaId] = useState<string>("");
+  const [nickname, setNickname] = useState("");
   const [cantidades, setCantidades] = useState<Cantidades>({});
   const [notas, setNotas] = useState("");
   const [mensaje, setMensaje] = useState<string | null>(null);
@@ -162,7 +169,7 @@ export function PedidoRapidoPanel({
         supabase.from("combos").select("id,nombre,precio_venta,imagen_url,combo_items(id,cantidad,activo,productos(nombre,presentacion_compra))").eq("activo", true).order("nombre"),
         supabase
           .from("pedidos")
-          .select("id,estado,enviado_at,notas,cuentas(estado,total_cuenta,mesas(nombre,zona)),pedido_items(id,cantidad,precio_unitario_capturado,productos(nombre,presentacion_compra),combos(nombre,combo_items(cantidad,activo,productos(nombre,presentacion_compra))))")
+          .select("id,estado,enviado_at,notas,cuentas(estado,total_cuenta,nickname,mesas(nombre,zona)),pedido_items(id,cantidad,estado,precio_unitario_capturado,productos(nombre,presentacion_compra),combos(nombre,combo_items(cantidad,activo,productos(nombre,presentacion_compra))))")
           .order("enviado_at", { ascending: false })
           .limit(12),
       ]);
@@ -265,7 +272,7 @@ export function PedidoRapidoPanel({
     const supabase = supabaseBrowser();
     const { data, error: historialError } = await supabase
       .from("pedidos")
-      .select("id,estado,enviado_at,notas,cuentas(estado,total_cuenta,mesas(nombre,zona)),pedido_items(id,cantidad,precio_unitario_capturado,productos(nombre,presentacion_compra),combos(nombre,combo_items(cantidad,activo,productos(nombre,presentacion_compra))))")
+      .select("id,estado,enviado_at,notas,cuentas(estado,total_cuenta,nickname,mesas(nombre,zona)),pedido_items(id,cantidad,estado,precio_unitario_capturado,productos(nombre,presentacion_compra),combos(nombre,combo_items(cantidad,activo,productos(nombre,presentacion_compra))))")
       .order("enviado_at", { ascending: false })
       .limit(12);
 
@@ -277,17 +284,18 @@ export function PedidoRapidoPanel({
     setHistorial((data ?? []) as PedidoHistorial[]);
   }
 
-  async function enviarPayload(payload: { mesaId: string; items: PedidoItemPayload[]; notas: string }) {
+  async function enviarPayload(payload: { mesaId: string; items: PedidoItemPayload[]; notas: string; nickname: string }) {
     const supabase = supabaseBrowser();
     const { error: rpcError } = await supabase.rpc("crear_pedido_rapido", {
       p_mesa_id: payload.mesaId || null,
       p_items: payload.items,
       p_notas: payload.notas || null,
+      p_nickname: payload.nickname || null,
     });
     if (rpcError) throw new Error(rpcError.message);
   }
 
-  function guardarComoPendiente(payload: { mesaId: string; items: PedidoItemPayload[]; notas: string }) {
+  function guardarComoPendiente(payload: { mesaId: string; items: PedidoItemPayload[]; notas: string; nickname: string }) {
     const nuevo: PedidoPendiente = { id: crypto.randomUUID(), ...payload, creado: new Date().toISOString() };
     const siguientes = [nuevo, ...leerPendientes()];
     guardarPendientes(siguientes);
@@ -310,21 +318,23 @@ export function PedidoRapidoPanel({
 
     try {
       if (items.length === 0) throw new Error("Agrega al menos un producto o combo.");
-      const payload = { mesaId, items, notas };
+      const payload = { mesaId, items, notas, nickname: nickname.trim() };
       await enviarPayload(payload);
       setMensaje("Pedido enviado a caja.");
       setCantidades({});
       setItemActivo(null);
       setNotas("");
+      setNickname("");
       await cargarHistorial();
       await onPedidoEnviado?.();
     } catch (err) {
       if (items.length > 0) {
-        guardarComoPendiente({ mesaId, items, notas });
+        guardarComoPendiente({ mesaId, items, notas, nickname: nickname.trim() });
         setMensaje("No se pudo sincronizar. Guarde el pedido para reintentar.");
         setCantidades({});
         setItemActivo(null);
         setNotas("");
+        setNickname("");
       } else {
         setMensaje(err instanceof Error ? err.message : "No se pudo enviar el pedido.");
       }
@@ -396,6 +406,17 @@ export function PedidoRapidoPanel({
                 <p className="text-lg font-black text-dorado">{formatoCOP(total)}</p>
               </div>
             </div>
+
+            <label className="mt-3 block text-sm font-bold text-champana">
+              Nickname opcional
+              <input
+                value={nickname}
+                onChange={(event) => setNickname(event.target.value)}
+                maxLength={60}
+                placeholder="Ej: Carlos, cumple, familia Lopez"
+                className="tap-target mt-1 w-full rounded-md border border-antiguo/20 bg-carbon px-3 text-crema placeholder:text-antiguo/50"
+              />
+            </label>
 
             {busquedaAbierta ? (
               <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_220px]">
@@ -534,7 +555,7 @@ export function PedidoRapidoPanel({
               </div>
               {pedido.notas ? <p className="mt-2 text-sm text-antiguo/75">{pedido.notas}</p> : null}
               <ul className="mt-3 space-y-2 text-sm">
-                {(pedido.pedido_items ?? []).map((item: any) => (
+                {itemsPedido(pedido).map((item: any) => (
                   <li key={item.id} className="flex flex-wrap justify-between gap-x-3 gap-y-1 border-t border-antiguo/10 pt-2">
                     <span>{item.cantidad} x {nombreHistorialItem(item)}</span>
                     <span className="font-bold text-dorado">{formatoCOP(Number(item.cantidad) * Number(item.precio_unitario_capturado))}</span>

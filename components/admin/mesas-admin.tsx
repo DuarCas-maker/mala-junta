@@ -23,6 +23,16 @@ export function MesasAdminPanel() {
   const [estado, setEstado] = useState<Estado>("cargando");
 
   const totalActual = useMemo(() => mesas.filter((mesa) => mesa.activa).length, [mesas]);
+  const totalDeseado = Number(totalMesas);
+  const totalValido = Number.isInteger(totalDeseado) && totalDeseado >= 1 && totalDeseado <= 200;
+  const diferencia = totalValido ? totalDeseado - totalActual : 0;
+  const vistaPrevia = useMemo(() => {
+    if (!totalMesas) return "Escribe el total de mesas que quieres dejar visible.";
+    if (!totalValido) return "El total debe estar entre 1 y 200 mesas.";
+    if (diferencia > 0) return `Se agregaran Mesa ${totalActual + 1} a Mesa ${totalDeseado}.`;
+    if (diferencia < 0) return `Se ocultaran Mesa ${totalDeseado + 1} a Mesa ${totalActual}.`;
+    return "No hay cambios pendientes.";
+  }, [diferencia, totalActual, totalDeseado, totalMesas, totalValido]);
 
   const cargar = useCallback(async () => {
     setEstado("cargando");
@@ -83,9 +93,17 @@ export function MesasAdminPanel() {
   return (
     <div className="grid gap-5 lg:grid-cols-[360px_1fr]">
       <form onSubmit={guardar} className="rounded-lg border border-antiguo/15 bg-espresso p-3 shadow-suave sm:p-4">
-        <h3 className="text-xl font-black text-crema">Numero de mesas</h3>
+        <p className="text-xs font-black uppercase tracking-wide text-oro">Configuracion</p>
+        <h3 className="mt-1 text-xl font-black text-crema">Total de mesas visibles</h3>
+        <p className="mt-2 text-sm text-antiguo/70">
+          Sube el total para agregar mesas nuevas. Baja el total para ocultar las sobrantes.
+        </p>
+        <div className="mt-4 rounded-md border border-oro/20 bg-carbon p-3">
+          <p className="text-sm text-antiguo/70">Mesas visibles ahora</p>
+          <p className="text-3xl font-black text-dorado">{totalActual}</p>
+        </div>
         <label className="mt-4 block text-sm font-bold text-champana">
-          Mesas activas
+          Nuevo total visible
           <input
             value={totalMesas}
             onChange={(event) => setTotalMesas(event.target.value.replace(/\D/g, ""))}
@@ -96,8 +114,9 @@ export function MesasAdminPanel() {
             className="tap-target mt-1 w-full rounded-md border border-antiguo/20 bg-carbon px-3 text-crema"
           />
         </label>
-        <button disabled={estado !== "idle" || !totalMesas} className="tap-target mt-5 w-full rounded-md bg-oro px-4 font-black text-carbon disabled:opacity-60">
-          {estado === "guardando" ? "Guardando..." : "Guardar mesas"}
+        <p className="mt-3 rounded-md border border-antiguo/15 bg-carbon p-3 text-sm font-semibold text-champana">{vistaPrevia}</p>
+        <button disabled={estado !== "idle" || !totalMesas || !totalValido || diferencia === 0} className="tap-target mt-5 w-full rounded-md bg-oro px-4 font-black text-carbon disabled:opacity-60">
+          {estado === "guardando" ? "Guardando..." : diferencia > 0 ? "Agregar mesas" : diferencia < 0 ? "Ocultar mesas sobrantes" : "Sin cambios"}
         </button>
         {mensaje ? <p className="mt-3 rounded-md border border-antiguo/15 bg-carbon p-3 text-sm font-semibold text-champana">{mensaje}</p> : null}
       </form>
