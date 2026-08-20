@@ -17,6 +17,8 @@ type PedidoHistorial = any;
 type ModuloCaja = "cobros" | "pedidos" | "inventario";
 type FiltroFechaCobros = "hoy" | "todos";
 
+const MAX_CANTIDAD_ITEM_CAJA = 999;
+
 const mediosPago: { id: MedioPago; nombre: string }[] = [
   { id: "efectivo", nombre: "Efectivo" },
   { id: "datafono", nombre: "Datafono" },
@@ -212,6 +214,7 @@ export function CajaOperativa() {
   const [motivoPorPedido, setMotivoPorPedido] = useState<Record<string, string>>({});
   const [observacionPorPedido, setObservacionPorPedido] = useState<Record<string, string>>({});
   const [cantidadesEditadas, setCantidadesEditadas] = useState<Record<string, string>>({});
+  const [mensajesCantidad, setMensajesCantidad] = useState<Record<string, { tipo: "ok" | "error"; texto: string }>>({});
   const [requiereAperturaCaja, setRequiereAperturaCaja] = useState(false);
   const [filtroFechaCobros, setFiltroFechaCobros] = useState<FiltroFechaCobros>("hoy");
 
@@ -347,36 +350,58 @@ export function CajaOperativa() {
 
   function cambiarCantidadEditada(item: any, delta: number) {
     const actual = Number(valorCantidadEditada(item));
-    const siguiente = Math.max(0, Math.min(200, (Number.isFinite(actual) ? actual : Number(item.cantidad ?? 0)) + delta));
+    const siguiente = Math.max(0, Math.min(MAX_CANTIDAD_ITEM_CAJA, (Number.isFinite(actual) ? actual : Number(item.cantidad ?? 0)) + delta));
     setCantidadesEditadas((valores) => ({ ...valores, [item.id]: String(siguiente) }));
+    setMensajesCantidad((mensajes) => {
+      const siguientes = { ...mensajes };
+      delete siguientes[item.id];
+      return siguientes;
+    });
   }
 
   async function guardarCantidadItem(item: any) {
     const cantidad = Number(valorCantidadEditada(item));
-    if (!Number.isInteger(cantidad) || cantidad < 0 || cantidad > 200) {
-      setMensaje("La cantidad debe ser un numero entre 0 y 200.");
+    if (!Number.isInteger(cantidad) || cantidad < 0 || cantidad > MAX_CANTIDAD_ITEM_CAJA) {
+      const texto = `La cantidad debe ser un numero entre 0 y ${MAX_CANTIDAD_ITEM_CAJA}.`;
+      setMensaje(texto);
+      setMensajesCantidad((mensajes) => ({ ...mensajes, [item.id]: { tipo: "error", texto } }));
       return;
     }
 
     setMensaje(null);
-    setProcesando(item.id);
-    const supabase = supabaseBrowser();
-    const { error: rpcError } = await supabase.rpc("editar_pedido_item_caja", {
-      p_pedido_item_id: item.id,
-      p_cantidad: cantidad,
+    setMensajesCantidad((mensajes) => {
+      const siguientes = { ...mensajes };
+      delete siguientes[item.id];
+      return siguientes;
     });
+    setProcesando(item.id);
 
-    if (rpcError) setMensaje(rpcError.message === "stock_insuficiente" ? "No hay stock suficiente para subir esa cantidad." : rpcError.message);
-    else {
-      setMensaje(cantidad === 0 ? "Item anulado y cuenta recalculada." : "Cantidad actualizada y cuenta recalculada.");
+    try {
+      const supabase = supabaseBrowser();
+      const { error: rpcError } = await supabase.rpc("editar_pedido_item_caja", {
+        p_pedido_item_id: item.id,
+        p_cantidad: cantidad,
+      });
+
+      if (rpcError) throw new Error(rpcError.message);
+
+      const texto = cantidad === 0 ? "Item anulado y cuenta recalculada." : "Cantidad actualizada y cuenta recalculada.";
+      setMensaje(texto);
+      setMensajesCantidad((mensajes) => ({ ...mensajes, [item.id]: { tipo: "ok", texto: "Guardado" } }));
       setCantidadesEditadas((valores) => {
         const siguientes = { ...valores };
         delete siguientes[item.id];
         return siguientes;
       });
+      await cargar();
+    } catch (err) {
+      const errorTexto = err instanceof Error ? err.message : "No se pudo guardar la cantidad.";
+      const texto = errorTexto === "stock_insuficiente" ? "No hay stock suficiente para subir esa cantidad." : errorTexto;
+      setMensaje(texto);
+      setMensajesCantidad((mensajes) => ({ ...mensajes, [item.id]: { tipo: "error", texto } }));
+    } finally {
+      setProcesando(null);
     }
-    setProcesando(null);
-    await cargar();
   }
 
   async function registrarPago(cuenta: Cuenta) {
@@ -561,6 +586,7 @@ export function CajaOperativa() {
                           const valorEditado = valorCantidadEditada(item);
                           const cantidadEditada = Number(valorEditado);
                           const cambioPendiente = Number.isInteger(cantidadEditada) && cantidadEditada !== Number(item.cantidad ?? 0);
+                          const mensajeCantidad = mensajesCantidad[item.id];
 
                           return (
                           <li key={item.id} className="grid gap-2 border-t border-antiguo/10 pt-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
@@ -572,13 +598,21 @@ export function CajaOperativa() {
                               <button type="button" onClick={() => cambiarCantidadEditada(item, -1)} disabled={procesando === item.id} className="h-9 rounded-md border border-antiguo/20 bg-espresso text-lg font-black disabled:opacity-40">-</button>
                               <input
                                 value={valorEditado}
-                                onChange={(event) => setCantidadesEditadas((valores) => ({ ...valores, [item.id]: event.target.value.replace(/\D/g, "").slice(0, 3) }))}
+                                onChange={(event) => {
+                                  setCantidadesEditadas((valores) => ({ ...valores, [item.id]: event.target.value.replace(/\D/g, "").slice(0, 3) }));
+                                  setMensajesCantidad((mensajes) => {
+                                    const siguientes = { ...mensajes };
+                                    delete siguientes[item.id];
+                                    return siguientes;
+                                  });
+                                }}
                                 inputMode="numeric"
                                 className="h-9 rounded-md border border-antiguo/20 bg-espresso px-2 text-center font-black text-crema"
                               />
                               <button type="button" onClick={() => cambiarCantidadEditada(item, 1)} disabled={procesando === item.id} className="h-9 rounded-md border border-antiguo/20 bg-espresso text-lg font-black disabled:opacity-40">+</button>
-                              <button type="button" onClick={() => guardarCantidadItem(item)} disabled={procesando === item.id || !cambioPendiente} className="h-9 rounded-md bg-oro px-3 text-xs font-black text-carbon disabled:opacity-40">Guardar</button>
+                              <button type="button" onClick={() => guardarCantidadItem(item)} disabled={procesando === item.id || !cambioPendiente} className="h-9 rounded-md bg-oro px-3 text-xs font-black text-carbon disabled:opacity-40">{procesando === item.id ? "Guardando..." : "Guardar"}</button>
                             </div>
+                            {mensajeCantidad ? <p className={mensajeCantidad.tipo === "ok" ? "text-xs font-bold text-dorado sm:col-span-2 sm:text-right" : "text-xs font-bold text-red-200 sm:col-span-2 sm:text-right"}>{mensajeCantidad.texto}</p> : null}
                           </li>
                           );
                         })}

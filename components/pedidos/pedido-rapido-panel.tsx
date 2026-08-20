@@ -5,7 +5,7 @@ import { estadoPedidoTexto, formatoCOP } from "@/lib/format";
 import type { Perfil } from "@/lib/roles";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 
-type Mesa = { id: string; nombre: string; zona: string; es_vip: boolean };
+type Mesa = { id: string; nombre: string; zona: string; es_vip: boolean; cuenta_id?: string | null; cuenta_estado?: string | null; nickname?: string | null; ultimo_pedido_at?: string | null };
 type ComponenteVenta = { nombre: string; presentacion_compra: string | null; cantidad: number };
 type ItemVenta = {
   clave: string;
@@ -61,6 +61,7 @@ function numeroMesa(nombre: string) {
 }
 
 function ordenarMesas(a: Mesa, b: Mesa) {
+  if (Boolean(a.cuenta_id) !== Boolean(b.cuenta_id)) return a.cuenta_id ? -1 : 1;
   const diferencia = numeroMesa(a.nombre) - numeroMesa(b.nombre);
   return diferencia || a.nombre.localeCompare(b.nombre, "es");
 }
@@ -92,6 +93,22 @@ function nombreCuentaPedido(pedido: PedidoHistorial) {
   const base = mesa ? `${mesa.nombre} - ${mesa.zona}` : "Pedido directo";
   const nickname = String(cuenta?.nickname ?? "").trim();
   return nickname ? `${base} - ${nickname}` : base;
+}
+
+function nombreMesaSelector(mesa: Mesa) {
+  const base = `${mesa.nombre} - ${mesa.zona}`;
+  const nickname = String(mesa.nickname ?? "").trim();
+  if (nickname) return `${base} - ${nickname}`;
+  return mesa.cuenta_id ? `${base} - cuenta abierta` : base;
+}
+
+async function cargarMesasParaPedidos(supabase: ReturnType<typeof supabaseBrowser>) {
+  const mesasRpc = await supabase.rpc("mesas_para_pedidos");
+  if (!mesasRpc.error) return ((mesasRpc.data ?? []) as Mesa[]).sort(ordenarMesas);
+
+  const mesasBase = await supabase.from("mesas").select("id,nombre,zona,es_vip").eq("activa", true).order("nombre");
+  if (mesasBase.error) throw mesasRpc.error;
+  return ((mesasBase.data ?? []) as Mesa[]).sort(ordenarMesas);
 }
 
 function fechaPedido(fecha?: string) {
@@ -159,12 +176,40 @@ export function PedidoRapidoPanel({
 
   useEffect(() => {
     let activo = true;
+    const supabase = supabaseBrowser();
+
+    async function actualizarMesas() {
+      try {
+        const mesasActualizadas = await cargarMesasParaPedidos(supabase);
+        if (activo) setMesas(mesasActualizadas);
+      } catch {
+        // La carga principal ya muestra errores; este refresco solo mantiene sincronizado el selector.
+      }
+    }
+
+    const canal = supabase
+      .channel("pedido-rapido-mesas")
+      .on("postgres_changes", { event: "*", schema: "public", table: "cuentas" }, actualizarMesas)
+      .on("postgres_changes", { event: "*", schema: "public", table: "pedidos" }, actualizarMesas)
+      .subscribe();
+
+    const timer = window.setInterval(actualizarMesas, 15000);
+
+    return () => {
+      activo = false;
+      window.clearInterval(timer);
+      void supabase.removeChannel(canal);
+    };
+  }, []);
+
+  useEffect(() => {
+    let activo = true;
 
     async function cargarDatos() {
       setMensaje("Cargando mesas, productos y combos...");
       const supabase = supabaseBrowser();
-      const [{ data: mesasData, error: mesasError }, { data: productosData, error: productosError }, { data: combosData, error: combosError }, { data: historialData, error: historialError }] = await Promise.all([
-        supabase.from("mesas").select("id,nombre,zona,es_vip").eq("activa", true).order("nombre"),
+      const [mesasData, { data: productosData, error: productosError }, { data: combosData, error: combosError }, { data: historialData, error: historialError }] = await Promise.all([
+        cargarMesasParaPedidos(supabase),
         supabase.from("v_productos_operativos").select("id,nombre,precio_venta,imagen_url,stock_actual,presentacion_compra,categoria").order("nombre"),
         supabase.from("combos").select("id,nombre,precio_venta,imagen_url,combo_items(id,cantidad,activo,productos(nombre,presentacion_compra))").eq("activo", true).order("nombre"),
         supabase
@@ -174,7 +219,6 @@ export function PedidoRapidoPanel({
           .limit(12),
       ]);
 
-      if (mesasError) throw mesasError;
       if (productosError) throw productosError;
       if (combosError) throw combosError;
       if (historialError) throw historialError;
@@ -212,7 +256,7 @@ export function PedidoRapidoPanel({
       }));
 
       if (activo) {
-        setMesas(((mesasData ?? []) as Mesa[]).sort(ordenarMesas));
+        setMesas(mesasData);
         setItemsVenta([...productos, ...combos]);
         setHistorial((historialData ?? []) as PedidoHistorial[]);
         setMensaje(null);
@@ -256,6 +300,16 @@ export function PedidoRapidoPanel({
     return itemsSeleccionados.reduce((sum, { cantidad }) => sum + cantidad, 0);
   }, [itemsSeleccionados]);
 
+  const mesasAbiertas = useMemo(() => mesas.filter((mesa) => mesa.cuenta_id), [mesas]);
+  const mesasDisponibles = useMemo(() => mesas.filter((mesa) => !mesa.cuenta_id), [mesas]);
+  const mesaSeleccionada = useMemo(() => mesas.find((mesa) => mesa.id === mesaId) ?? null, [mesaId, mesas]);
+  const nicknameBloqueado = Boolean(mesaSeleccionada?.cuenta_id);
+
+  useEffect(() => {
+    if (!mesaSeleccionada?.cuenta_id) return;
+    setNickname(String(mesaSeleccionada.nickname ?? "").trim());
+  }, [mesaSeleccionada]);
+
   function activarItem(clave: string) {
     setItemActivo(clave);
   }
@@ -270,11 +324,14 @@ export function PedidoRapidoPanel({
 
   async function cargarHistorial() {
     const supabase = supabaseBrowser();
-    const { data, error: historialError } = await supabase
-      .from("pedidos")
-      .select("id,estado,enviado_at,notas,cuentas(estado,total_cuenta,nickname,mesas(nombre,zona)),pedido_items(id,cantidad,estado,precio_unitario_capturado,productos(nombre,presentacion_compra),combos(nombre,combo_items(cantidad,activo,productos(nombre,presentacion_compra))))")
-      .order("enviado_at", { ascending: false })
-      .limit(12);
+    const [{ data, error: historialError }, mesasData] = await Promise.all([
+      supabase
+        .from("pedidos")
+        .select("id,estado,enviado_at,notas,cuentas(estado,total_cuenta,nickname,mesas(nombre,zona)),pedido_items(id,cantidad,estado,precio_unitario_capturado,productos(nombre,presentacion_compra),combos(nombre,combo_items(cantidad,activo,productos(nombre,presentacion_compra))))")
+        .order("enviado_at", { ascending: false })
+        .limit(12),
+      cargarMesasParaPedidos(supabase),
+    ]);
 
     if (historialError) {
       setMensaje(historialError.message);
@@ -282,6 +339,7 @@ export function PedidoRapidoPanel({
     }
 
     setHistorial((data ?? []) as PedidoHistorial[]);
+    setMesas(mesasData);
   }
 
   async function enviarPayload(payload: { mesaId: string; items: PedidoItemPayload[]; notas: string; nickname: string }) {
@@ -320,7 +378,7 @@ export function PedidoRapidoPanel({
       if (items.length === 0) throw new Error("Agrega al menos un producto o combo.");
       const payload = { mesaId, items, notas, nickname: nickname.trim() };
       await enviarPayload(payload);
-      setMensaje("Pedido enviado a caja.");
+      setMensaje("Pedido sincronizado con la mesa.");
       setCantidades({});
       setItemActivo(null);
       setNotas("");
@@ -330,7 +388,7 @@ export function PedidoRapidoPanel({
     } catch (err) {
       if (items.length > 0) {
         guardarComoPendiente({ mesaId, items, notas, nickname: nickname.trim() });
-        setMensaje("No se pudo sincronizar. Guarde el pedido para reintentar.");
+        setMensaje(`No se pudo sincronizar: ${err instanceof Error ? err.message : "error desconocido"}. Quedo guardado para reintentar.`);
         setCantidades({});
         setItemActivo(null);
         setNotas("");
@@ -391,11 +449,30 @@ export function PedidoRapidoPanel({
             <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-end">
               <label className="block text-sm font-bold text-champana">
                 Mesa o zona
-                <select value={mesaId} onChange={(event) => setMesaId(event.target.value)} className="tap-target mt-1 w-full rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
+                <select
+                  value={mesaId}
+                  onChange={(event) => {
+                    const siguienteMesa = mesas.find((mesa) => mesa.id === event.target.value);
+                    setMesaId(event.target.value);
+                    setNickname(String(siguienteMesa?.nickname ?? "").trim());
+                  }}
+                  className="tap-target mt-1 w-full rounded-md border border-antiguo/20 bg-carbon px-3 text-crema"
+                >
                   <option value="">Pedido directo</option>
-                  {mesas.map((mesa) => (
-                    <option key={mesa.id} value={mesa.id}>{mesa.nombre} - {mesa.zona}</option>
-                  ))}
+                  {mesasAbiertas.length > 0 ? (
+                    <optgroup label="Mesas abiertas">
+                      {mesasAbiertas.map((mesa) => (
+                        <option key={mesa.id} value={mesa.id}>{nombreMesaSelector(mesa)}</option>
+                      ))}
+                    </optgroup>
+                  ) : null}
+                  {mesasDisponibles.length > 0 ? (
+                    <optgroup label="Mesas disponibles">
+                      {mesasDisponibles.map((mesa) => (
+                        <option key={mesa.id} value={mesa.id}>{nombreMesaSelector(mesa)}</option>
+                      ))}
+                    </optgroup>
+                  ) : null}
                 </select>
               </label>
               <button type="button" onClick={() => setBusquedaAbierta((actual) => !actual)} className={busquedaAbierta || busqueda ? "tap-target rounded-md bg-oro px-4 text-sm font-black text-carbon" : "tap-target rounded-md border border-antiguo/20 bg-carbon px-4 text-sm font-bold text-crema"}>
@@ -412,10 +489,12 @@ export function PedidoRapidoPanel({
               <input
                 value={nickname}
                 onChange={(event) => setNickname(event.target.value)}
+                disabled={nicknameBloqueado}
                 maxLength={60}
-                placeholder="Ej: Carlos, cumple, familia Lopez"
-                className="tap-target mt-1 w-full rounded-md border border-antiguo/20 bg-carbon px-3 text-crema placeholder:text-antiguo/50"
+                placeholder={nicknameBloqueado ? "Nickname de cuenta abierta" : "Ej: Carlos, cumple, familia Lopez"}
+                className="tap-target mt-1 w-full rounded-md border border-antiguo/20 bg-carbon px-3 text-crema placeholder:text-antiguo/50 disabled:opacity-70"
               />
+              {nicknameBloqueado ? <span className="mt-1 block text-xs text-antiguo/60">Esta mesa ya tiene cuenta abierta; los nuevos items se agregan a esa cuenta.</span> : null}
             </label>
 
             {busquedaAbierta ? (
