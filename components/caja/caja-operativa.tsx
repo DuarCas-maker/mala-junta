@@ -39,7 +39,17 @@ function normalizarCuentasCaja(data: unknown): Cuenta[] {
     }
   }
 
-  return [...cuentas].sort((a, b) => {
+  const cuentasPorId = new Map<string, Cuenta>();
+
+  cuentas.forEach((cuenta) => {
+    if (!cuenta?.id || cuentasPorId.has(cuenta.id)) return;
+    cuentasPorId.set(cuenta.id, {
+      ...cuenta,
+      pedidos: ordenarPedidosPorFecha(pedidosUnicos(pedidosCuenta(cuenta))),
+    });
+  });
+
+  return [...cuentasPorId.values()].sort((a, b) => {
     const prioridadA = Number(a.prioridad_cobro ?? 99);
     const prioridadB = Number(b.prioridad_cobro ?? 99);
     if (prioridadA !== prioridadB) return prioridadA - prioridadB;
@@ -73,7 +83,7 @@ function completarCuentasConHistorial(cuentasRpc: Cuenta[], pedidos: PedidoHisto
   const cuentasPorId = new Map<string, Cuenta>();
 
   cuentasRpc.forEach((cuenta) => {
-    if (cuenta?.id) cuentasPorId.set(cuenta.id, cuenta);
+    if (cuenta?.id) cuentasPorId.set(cuenta.id, { ...cuenta, pedidos: pedidosUnicos(pedidosCuenta(cuenta)) });
   });
 
   pedidos.forEach((pedido) => {
@@ -164,6 +174,18 @@ function fechaLocalISO(fecha?: string | Date) {
 
 function pedidosCuenta(cuenta: Cuenta) {
   return Array.isArray(cuenta.pedidos) ? cuenta.pedidos : [];
+}
+
+function pedidosUnicos(pedidos: PedidoHistorial[]) {
+  const pedidosPorId = new Map<string, PedidoHistorial>();
+
+  pedidos.forEach((pedido) => {
+    if (!pedido?.id || pedido.estado === "anulado") return;
+    if (pedidosPorId.has(pedido.id)) return;
+    pedidosPorId.set(pedido.id, pedido);
+  });
+
+  return [...pedidosPorId.values()];
 }
 
 function itemsPedido(pedido: PedidoHistorial) {
@@ -329,19 +351,74 @@ export function CajaOperativa() {
       return;
     }
 
+    if (!window.confirm("Esto anula el pedido completo. Para quitar solo un producto usa Anular item en la fila.")) return;
+
     setMensaje(null);
     setProcesando(pedidoId);
-    const supabase = supabaseBrowser();
-    const { error: rpcError } = await supabase.rpc("anular_pedido", {
-      p_pedido_id: pedidoId,
-      p_motivo_id: motivoId,
-      p_observacion: observacionPorPedido[pedidoId] || null,
-    });
 
-    if (rpcError) setMensaje(rpcError.message === "caja_no_abierta" ? "Debes abrir caja antes de registrar pagos." : rpcError.message);
-    else setMensaje("Pedido anulado con motivo.");
-    setProcesando(null);
-    await cargar();
+    try {
+      const supabase = supabaseBrowser();
+      const { error: rpcError } = await supabase.rpc("anular_pedido", {
+        p_pedido_id: pedidoId,
+        p_motivo_id: motivoId,
+        p_observacion: observacionPorPedido[pedidoId] || null,
+      });
+
+      if (rpcError) throw new Error(rpcError.message);
+      setMensaje("Pedido completo anulado con motivo.");
+      await cargar();
+    } catch (err) {
+      const texto = err instanceof Error ? err.message : "No se pudo anular el pedido.";
+      setMensaje(texto === "caja_no_abierta" ? "Debes abrir caja antes de registrar pagos." : texto);
+    } finally {
+      setProcesando(null);
+    }
+  }
+
+  async function anularItemPedido(item: any, pedidoId: string) {
+    const motivoId = motivoPorPedido[pedidoId];
+    if (!motivoId) {
+      setMensaje("Selecciona un motivo de anulacion.");
+      return;
+    }
+
+    setMensaje(null);
+    setProcesando(item.id);
+
+    try {
+      const supabase = supabaseBrowser();
+      const { error: rpcError } = await supabase.rpc("anular_pedido_item_caja", {
+        p_pedido_item_id: item.id,
+        p_motivo_id: motivoId,
+        p_observacion: observacionPorPedido[pedidoId] || null,
+      });
+
+      if (rpcError) throw new Error(rpcError.message);
+      setMensaje("Item anulado y cuenta recalculada.");
+      await cargar();
+    } catch (err) {
+      const texto = err instanceof Error ? err.message : "No se pudo anular el item.";
+      setMensaje(texto === "stock_insuficiente" ? "No se pudo ajustar inventario para ese item." : texto);
+    } finally {
+      setProcesando(null);
+    }
+  }
+
+  async function liberarMesa(cuentaId: string) {
+    setMensaje(null);
+    setProcesando(cuentaId);
+
+    try {
+      const supabase = supabaseBrowser();
+      const { data, error: rpcError } = await supabase.rpc("cerrar_cuenta_si_vacia", { p_cuenta_id: cuentaId });
+      if (rpcError) throw new Error(rpcError.message);
+      setMensaje(data ? "Mesa liberada para una nueva venta." : "La cuenta aun tiene items o pagos activos.");
+      await cargar();
+    } catch (err) {
+      setMensaje(err instanceof Error ? err.message : "No se pudo liberar la mesa.");
+    } finally {
+      setProcesando(null);
+    }
   }
 
   function valorCantidadEditada(item: any) {
@@ -547,6 +624,7 @@ export function CajaOperativa() {
             const pagosCuenta = cuenta.pagos ?? [];
             const bloqueada = procesando === cuenta.id;
             const fechaCuenta = fechaPrincipalCuenta(cuenta);
+            const cuentaVacia = total <= 0 && pedidos.every((pedido: PedidoHistorial) => itemsPedido(pedido).length === 0);
 
             return (
               <article key={cuenta.id} className="rounded-lg border border-antiguo/15 bg-espresso p-3 shadow-suave sm:p-4">
@@ -611,6 +689,7 @@ export function CajaOperativa() {
                               />
                               <button type="button" onClick={() => cambiarCantidadEditada(item, 1)} disabled={procesando === item.id} className="h-9 rounded-md border border-antiguo/20 bg-espresso text-lg font-black disabled:opacity-40">+</button>
                               <button type="button" onClick={() => guardarCantidadItem(item)} disabled={procesando === item.id || !cambioPendiente} className="h-9 rounded-md bg-oro px-3 text-xs font-black text-carbon disabled:opacity-40">{procesando === item.id ? "Guardando..." : "Guardar"}</button>
+                              <button type="button" onClick={() => anularItemPedido(item, pedido.id)} disabled={procesando === item.id || procesando === pedido.id} className="col-span-4 h-9 rounded-md border border-red-300/30 bg-red-950/30 px-2 text-xs font-bold text-red-100 disabled:opacity-40">Anular item</button>
                             </div>
                             {mensajeCantidad ? <p className={mensajeCantidad.tipo === "ok" ? "text-xs font-bold text-dorado sm:col-span-2 sm:text-right" : "text-xs font-bold text-red-200 sm:col-span-2 sm:text-right"}>{mensajeCantidad.texto}</p> : null}
                           </li>
@@ -625,7 +704,7 @@ export function CajaOperativa() {
                             {motivos.map((motivo) => <option key={motivo.id} value={motivo.id}>{motivo.texto}</option>)}
                           </select>
                           <input value={observacionPorPedido[pedido.id] ?? ""} onChange={(event) => setObservacionPorPedido((actual) => ({ ...actual, [pedido.id]: event.target.value }))} placeholder="Observacion" className="tap-target rounded-md border border-antiguo/20 bg-espresso px-3 text-crema placeholder:text-antiguo/50" />
-                          <button disabled={procesando === pedido.id} onClick={() => anularPedido(pedido.id)} className="tap-target rounded-md border border-red-300/30 bg-red-950/30 px-3 text-sm font-bold text-red-100 disabled:opacity-50">Anular</button>
+                          <button disabled={procesando === pedido.id} onClick={() => anularPedido(pedido.id)} className="tap-target rounded-md border border-red-300/30 bg-red-950/30 px-3 text-sm font-bold text-red-100 disabled:opacity-50">Anular pedido completo</button>
                         </div>
                       ) : null}
                     </section>
@@ -660,6 +739,13 @@ export function CajaOperativa() {
                   </section>
                 ) : null}
 
+                {cuentaVacia ? (
+                  <section className="mt-4 rounded-md border border-dorado/30 bg-carbon p-3">
+                    <p className="text-sm font-bold text-dorado">Mesa sin items activos</p>
+                    <p className="mt-1 text-xs text-antiguo/65">Libera esta cuenta para que la mesa vuelva a quedar disponible en pedidos.</p>
+                    <button type="button" disabled={bloqueada} onClick={() => liberarMesa(cuenta.id)} className="tap-target mt-3 w-full rounded-md bg-oro px-3 text-sm font-black text-carbon disabled:opacity-50">{bloqueada ? "Liberando..." : "Liberar mesa"}</button>
+                  </section>
+                ) : (
                 <section className="mt-4 rounded-md border border-oro/20 bg-carbon p-3">
                   <p className="text-sm font-bold text-dorado">Cobro</p>
                   <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_180px]">
@@ -714,6 +800,7 @@ export function CajaOperativa() {
                     <button type="button" disabled={bloqueada || requiereAperturaCaja} onClick={() => registrarPago(cuenta)} className="tap-target rounded-md bg-oro px-3 text-sm font-black text-carbon disabled:opacity-50">{requiereAperturaCaja ? "Abre caja primero" : "Registrar pago"}</button>
                   </div>
                 </section>
+                )}
               </article>
             );
           })}

@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { estadoPedidoTexto, formatoCOP } from "@/lib/format";
 import type { Perfil } from "@/lib/roles";
 import { supabaseBrowser } from "@/lib/supabase-browser";
@@ -169,6 +169,7 @@ export function PedidoRapidoPanel({
   const [busqueda, setBusqueda] = useState("");
   const [busquedaAbierta, setBusquedaAbierta] = useState(false);
   const [itemActivo, setItemActivo] = useState<string | null>(null);
+  const enviandoRef = useRef(false);
 
   useEffect(() => {
     setPendientes(leerPendientes());
@@ -362,6 +363,9 @@ export function PedidoRapidoPanel({
 
   async function enviarPedido(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (enviandoRef.current) return;
+
+    enviandoRef.current = true;
     setMensaje(null);
     setEnviando(true);
 
@@ -377,31 +381,43 @@ export function PedidoRapidoPanel({
     try {
       if (items.length === 0) throw new Error("Agrega al menos un producto o combo.");
       const payload = { mesaId, items, notas, nickname: nickname.trim() };
-      await enviarPayload(payload);
-      setMensaje("Pedido sincronizado con la mesa.");
-      setCantidades({});
-      setItemActivo(null);
-      setNotas("");
-      setNickname("");
-      await cargarHistorial();
-      await onPedidoEnviado?.();
-    } catch (err) {
-      if (items.length > 0) {
-        guardarComoPendiente({ mesaId, items, notas, nickname: nickname.trim() });
+
+      try {
+        await enviarPayload(payload);
+      } catch (err) {
+        guardarComoPendiente(payload);
         setMensaje(`No se pudo sincronizar: ${err instanceof Error ? err.message : "error desconocido"}. Quedo guardado para reintentar.`);
         setCantidades({});
         setItemActivo(null);
         setNotas("");
         setNickname("");
-      } else {
-        setMensaje(err instanceof Error ? err.message : "No se pudo enviar el pedido.");
+        return;
       }
+
+      setMensaje("Pedido sincronizado con la mesa.");
+      setCantidades({});
+      setItemActivo(null);
+      setNotas("");
+      setNickname("");
+
+      try {
+        await cargarHistorial();
+        await onPedidoEnviado?.();
+      } catch (err) {
+        setMensaje(`Pedido creado. No se pudo refrescar la pantalla: ${err instanceof Error ? err.message : "error desconocido"}.`);
+      }
+    } catch (err) {
+      setMensaje(err instanceof Error ? err.message : "No se pudo enviar el pedido.");
     } finally {
+      enviandoRef.current = false;
       setEnviando(false);
     }
   }
 
   async function reintentarPendiente(pendiente: PedidoPendiente) {
+    if (enviandoRef.current) return;
+
+    enviandoRef.current = true;
     setEnviando(true);
     setMensaje("Reintentando pedido pendiente...");
     try {
@@ -410,11 +426,16 @@ export function PedidoRapidoPanel({
       guardarPendientes(restantes);
       setPendientes(restantes);
       setMensaje("Pedido pendiente sincronizado.");
-      await cargarHistorial();
-      await onPedidoEnviado?.();
+      try {
+        await cargarHistorial();
+        await onPedidoEnviado?.();
+      } catch (err) {
+        setMensaje(`Pedido pendiente sincronizado. No se pudo refrescar la pantalla: ${err instanceof Error ? err.message : "error desconocido"}.`);
+      }
     } catch (err) {
       setMensaje(err instanceof Error ? err.message : "No se pudo sincronizar el pendiente.");
     } finally {
+      enviandoRef.current = false;
       setEnviando(false);
     }
   }
