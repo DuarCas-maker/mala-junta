@@ -11,9 +11,22 @@ function numeroMesa(nombre: string) {
   return coincidencia ? Number(coincidencia[1]) : Number.MAX_SAFE_INTEGER;
 }
 
+function esMesaNumerada(mesa: Mesa) {
+  return numeroMesa(mesa.nombre) !== Number.MAX_SAFE_INTEGER;
+}
+
 function ordenarMesas(a: Mesa, b: Mesa) {
   const diferencia = numeroMesa(a.nombre) - numeroMesa(b.nombre);
   return diferencia || a.nombre.localeCompare(b.nombre, "es");
+}
+
+function mensajeError(error: unknown, fallback: string) {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object") {
+    const detalle = error as { message?: unknown; details?: unknown; hint?: unknown; code?: unknown };
+    return [detalle.message, detalle.details, detalle.hint, detalle.code].filter(Boolean).join(" - ") || fallback;
+  }
+  return fallback;
 }
 
 export function MesasAdminPanel() {
@@ -22,13 +35,15 @@ export function MesasAdminPanel() {
   const [mensaje, setMensaje] = useState<string | null>(null);
   const [estado, setEstado] = useState<Estado>("cargando");
 
-  const totalActual = useMemo(() => mesas.filter((mesa) => mesa.activa).length, [mesas]);
+  const totalActual = useMemo(() => mesas.filter((mesa) => mesa.activa && esMesaNumerada(mesa)).length, [mesas]);
+  const totalVisibles = useMemo(() => mesas.filter((mesa) => mesa.activa).length, [mesas]);
+  const totalVip = useMemo(() => mesas.filter((mesa) => mesa.activa && !esMesaNumerada(mesa)).length, [mesas]);
   const totalDeseado = Number(totalMesas);
   const totalValido = Number.isInteger(totalDeseado) && totalDeseado >= 1 && totalDeseado <= 200;
   const diferencia = totalValido ? totalDeseado - totalActual : 0;
   const vistaPrevia = useMemo(() => {
-    if (!totalMesas) return "Escribe el total de mesas que quieres dejar visible.";
-    if (!totalValido) return "El total debe estar entre 1 y 200 mesas.";
+    if (!totalMesas) return "Escribe el total de mesas numeradas que quieres dejar visible.";
+    if (!totalValido) return "El total debe estar entre 1 y 200 mesas numeradas.";
     if (diferencia > 0) return `Se agregaran Mesa ${totalActual + 1} a Mesa ${totalDeseado}.`;
     if (diferencia < 0) return `Se ocultaran Mesa ${totalDeseado + 1} a Mesa ${totalActual}.`;
     return "No hay cambios pendientes.";
@@ -49,9 +64,9 @@ export function MesasAdminPanel() {
 
       const mesasActivas = ((data ?? []) as Mesa[]).sort(ordenarMesas);
       setMesas(mesasActivas);
-      setTotalMesas(String(mesasActivas.length || 1));
+      setTotalMesas(String(mesasActivas.filter(esMesaNumerada).length || 1));
     } catch (error) {
-      setMensaje(error instanceof Error ? error.message : "No se pudieron cargar las mesas.");
+      setMensaje(mensajeError(error, "No se pudieron cargar las mesas."));
     } finally {
       setEstado("idle");
     }
@@ -84,7 +99,7 @@ export function MesasAdminPanel() {
       setTotalMesas(String(total));
       setMensaje(`Mesas actualizadas: Mesa 1 a Mesa ${total}.`);
     } catch (error) {
-      setMensaje(error instanceof Error ? error.message : "No se pudo guardar la configuracion de mesas.");
+      setMensaje(mensajeError(error, "No se pudo guardar la configuracion de mesas."));
     } finally {
       setEstado("idle");
     }
@@ -94,16 +109,17 @@ export function MesasAdminPanel() {
     <div className="grid gap-5 lg:grid-cols-[360px_1fr]">
       <form onSubmit={guardar} className="rounded-lg border border-antiguo/15 bg-espresso p-3 shadow-suave sm:p-4">
         <p className="text-xs font-black uppercase tracking-wide text-oro">Configuracion</p>
-        <h3 className="mt-1 text-xl font-black text-crema">Total de mesas visibles</h3>
+        <h3 className="mt-1 text-xl font-black text-crema">Total de mesas numeradas</h3>
         <p className="mt-2 text-sm text-antiguo/70">
-          Sube el total para agregar mesas nuevas. Baja el total para ocultar las sobrantes.
+          Sube el total para agregar mesas nuevas. Baja el total para ocultar las sobrantes. Las VIP se conservan aparte.
         </p>
         <div className="mt-4 rounded-md border border-oro/20 bg-carbon p-3">
-          <p className="text-sm text-antiguo/70">Mesas visibles ahora</p>
+          <p className="text-sm text-antiguo/70">Mesas numeradas ahora</p>
           <p className="text-3xl font-black text-dorado">{totalActual}</p>
+          {totalVip > 0 ? <p className="mt-1 text-xs font-bold text-antiguo/60">VIP activas aparte: {totalVip}</p> : null}
         </div>
         <label className="mt-4 block text-sm font-bold text-champana">
-          Nuevo total visible
+          Nuevo total numerado
           <input
             value={totalMesas}
             onChange={(event) => setTotalMesas(event.target.value.replace(/\D/g, ""))}
@@ -125,7 +141,7 @@ export function MesasAdminPanel() {
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h3 className="text-xl font-black text-crema">Mesas visibles</h3>
-            <p className="mt-1 text-sm text-antiguo/70">Actualmente visibles en pedidos: {totalActual}</p>
+            <p className="mt-1 text-sm text-antiguo/70">Numeradas: {totalActual} / Total con VIP: {totalVisibles}</p>
           </div>
           <button type="button" onClick={cargar} disabled={estado !== "idle"} className="tap-target rounded-md border border-antiguo/20 px-4 text-sm font-bold text-crema disabled:opacity-50">
             Recargar
