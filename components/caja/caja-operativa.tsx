@@ -127,6 +127,16 @@ function totalPagado(cuenta: Cuenta) {
   return (cuenta.pagos ?? []).reduce((sum: number, pago: any) => sum + Number(pago.monto ?? 0), 0);
 }
 
+function soloDigitos(valor: string) {
+  return valor.replace(/\D/g, "");
+}
+
+function formatoMilesInput(valor: string) {
+  const digitos = soloDigitos(valor);
+  if (!digitos) return "";
+  return new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 }).format(Number(digitos));
+}
+
 function nombreMesa(cuenta: Cuenta) {
   const mesa = Array.isArray(cuenta.mesas) ? cuenta.mesas[0] : cuenta.mesas;
   const base = mesa ? `${mesa.nombre} - ${mesa.zona}` : "Pedido directo";
@@ -751,7 +761,14 @@ export function CajaOperativa() {
                   <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_180px]">
                     <label className="text-xs font-bold text-antiguo/80">
                       Valor
-                      <input type="number" min="0" inputMode="numeric" value={montosPago[cuenta.id] ?? ""} onChange={(event) => setMontosPago((actual) => ({ ...actual, [cuenta.id]: event.target.value }))} className="tap-target mt-1 w-full rounded-md border border-antiguo/20 bg-espresso px-3 text-crema" />
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={formatoMilesInput(montosPago[cuenta.id] ?? "")}
+                        onChange={(event) => setMontosPago((actual) => ({ ...actual, [cuenta.id]: soloDigitos(event.target.value) }))}
+                        placeholder="0"
+                        className="tap-target mt-1 h-12 w-full rounded-md border border-antiguo/20 bg-espresso px-3 text-xl font-black text-dorado placeholder:text-antiguo/40 sm:text-2xl"
+                      />
                     </label>
                     <label className="text-xs font-bold text-antiguo/80">
                       Medio
