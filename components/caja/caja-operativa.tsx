@@ -422,7 +422,7 @@ export function CajaOperativa() {
       const supabase = supabaseBrowser();
       const { data, error: rpcError } = await supabase.rpc("cerrar_cuenta_si_vacia", { p_cuenta_id: cuentaId });
       if (rpcError) throw new Error(rpcError.message);
-      setMensaje(data ? "Mesa liberada para una nueva venta." : "La cuenta aun tiene items o pagos activos.");
+      setMensaje(data ? "Mesa liberada para una nueva venta." : "La cuenta aun tiene items activos o total pendiente.");
       await cargar();
     } catch (err) {
       setMensaje(err instanceof Error ? err.message : "No se pudo liberar la mesa.");
