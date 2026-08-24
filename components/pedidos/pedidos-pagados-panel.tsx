@@ -102,6 +102,10 @@ function estadoCuentaTexto(estado: string) {
   return estado;
 }
 
+function estadoVisualCuenta(cuenta: CuentaPagada) {
+  return estadoCuentaTexto(cuenta.grupo_estado ?? cuenta.estado);
+}
+
 function nombreItem(item: PedidoItemPagado) {
   return item.productos?.nombre ?? item.combos?.nombre ?? "Item";
 }
@@ -318,17 +322,17 @@ function GrupoCuentasPagadas({
           return (
             <article key={cuenta.id} className="rounded-md border border-antiguo/10 bg-carbon">
               <button type="button" onClick={() => setExpandidas((actual) => ({ ...actual, [cuenta.id]: !abierta }))} className="block w-full p-3 text-left">
-                <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
+                <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(360px,auto)] lg:items-start">
                   <div className="min-w-0">
                     <p className="text-lg font-black text-dorado">{fechaPedidoGrande(cuenta.ultimo_pedido_at)}</p>
                     <p className="text-sm font-bold text-oro">{nombreCuenta(cuenta)}</p>
-                    <h4 className="text-lg font-black text-crema">{estadoCuentaTexto(cuenta.estado)}</h4>
+                    <h4 className="text-lg font-black text-crema">{estadoVisualCuenta(cuenta)}</h4>
                     {cuenta.responsable_pendiente ? <p className="text-xs font-bold text-dorado">Pendiente: {cuenta.responsable_pendiente}</p> : null}
                   </div>
-                  <div className="text-left sm:text-right">
-                    <p className="text-xs text-antiguo/60">Saldo</p>
-                    <p className="text-2xl font-black text-dorado">{formatoCOP(cuenta.saldo_pendiente)}</p>
-                    <p className="text-xs text-antiguo/60">Total {formatoCOP(cuenta.total_vendido)} / pagado {formatoCOP(cuenta.total_pagado)}</p>
+                  <div className="grid min-w-0 gap-2 sm:grid-cols-3">
+                    <ValorCuenta titulo="Total cuenta" valor={formatoCOP(cuenta.total_vendido)} destacado />
+                    <ValorCuenta titulo="Pagado" valor={formatoCOP(cuenta.total_pagado)} />
+                    <ValorCuenta titulo="Saldo" valor={formatoCOP(cuenta.saldo_pendiente)} alerta={cuenta.saldo_pendiente > 0} />
                   </div>
                 </div>
               </button>
@@ -373,5 +377,14 @@ function GrupoCuentasPagadas({
 
       {cuentas.length === 0 ? <p className="mt-3 rounded-md border border-antiguo/10 bg-carbon p-4 text-center text-sm text-antiguo/70">Sin cuentas en este grupo.</p> : null}
     </section>
+  );
+}
+
+function ValorCuenta({ titulo, valor, destacado = false, alerta = false }: { titulo: string; valor: string; destacado?: boolean; alerta?: boolean }) {
+  return (
+    <div className={destacado ? "rounded-md border border-oro/25 bg-espresso px-3 py-2" : "rounded-md border border-antiguo/10 bg-espresso px-3 py-2"}>
+      <p className="text-xs font-bold uppercase text-antiguo/60">{titulo}</p>
+      <p className={alerta ? "text-lg font-black text-red-100" : destacado ? "text-lg font-black text-dorado" : "text-lg font-black text-crema"}>{valor}</p>
+    </div>
   );
 }
