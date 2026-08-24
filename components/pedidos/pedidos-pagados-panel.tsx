@@ -26,7 +26,8 @@ type PedidoPagado = {
 };
 type CuentaPagada = {
   id: string;
-  estado: "pagada" | "pagada_parcial";
+  estado: "pagada" | "pagada_parcial" | "cerrada";
+  grupo_estado?: "pagada" | "pagada_parcial";
   dia_negocio: string;
   created_at: string;
   ultimo_pedido_at: string;
@@ -96,6 +97,7 @@ function nombreCuenta(cuenta: CuentaPagada) {
 
 function estadoCuentaTexto(estado: string) {
   if (estado === "pagada") return "Pagada";
+  if (estado === "cerrada") return "Pagada";
   if (estado === "pagada_parcial") return "Pago parcial";
   return estado;
 }
