@@ -7,17 +7,19 @@ import { CatalogoStockAdminPanel } from "@/components/admin/catalogo-stock-admin
 import { InventarioAdminPanel } from "@/components/admin/inventario-admin";
 import { MesasAdminPanel } from "@/components/admin/mesas-admin";
 import { MetricasAdminPanel } from "@/components/admin/metricas-admin";
+import { PedidosPagadosPanel } from "@/components/pedidos/pedidos-pagados-panel";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Perfil } from "@/lib/roles";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 
 type Estado = "idle" | "cargando" | "guardando";
-type ModuloAdmin = "metricas" | "solicitudes" | "catalogo" | "auditoria" | "mesas" | "usuarios";
+type ModuloAdmin = "metricas" | "pedidos_pagados" | "solicitudes" | "catalogo" | "auditoria" | "mesas" | "usuarios";
 type SolicitudesTab = "ventas" | "inventario";
 
 const modulosAdmin: { id: ModuloAdmin; titulo: string; detalle: string }[] = [
   { id: "metricas", titulo: "Metricas", detalle: "Ventas, margen y caja" },
+  { id: "pedidos_pagados", titulo: "Pedidos pagados", detalle: "Ventas cobradas y reversos" },
   { id: "solicitudes", titulo: "Solicitudes", detalle: "Ventas e inventario OCR" },
   { id: "catalogo", titulo: "Catalogo y stock", detalle: "Productos, compras y combos" },
   { id: "auditoria", titulo: "Auditoria", detalle: "Conteos y diferencias" },
@@ -223,6 +225,7 @@ export function MeserosAdmin() {
           {mensaje ? <p className="mb-4 rounded-md border border-antiguo/15 bg-espresso p-3 text-sm font-semibold shadow-suave">{mensaje}</p> : null}
 
           {moduloActivo === "metricas" ? <MetricasAdminPanel /> : null}
+          {moduloActivo === "pedidos_pagados" ? <PedidosPagadosPanel modo="admin" /> : null}
           {moduloActivo === "solicitudes" ? <SolicitudesAdminPanel tab={solicitudesTab} setTab={setSolicitudesTab} /> : null}
           {moduloActivo === "catalogo" ? <CatalogoStockAdminPanel /> : null}
           {moduloActivo === "auditoria" ? <InventarioAdminPanel vista="auditoria" /> : null}

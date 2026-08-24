@@ -4,6 +4,8 @@ import Link from "next/link";
 import { InventarioConsultaPanel } from "@/components/caja/inventario-consulta-panel";
 import { CapturasVentaPanel } from "@/components/caja/capturas-venta-panel";
 import { CierreCajaPanel } from "@/components/caja/cierre-caja-panel";
+import { ModalMotivo } from "@/components/pedidos/modal-motivo";
+import { PedidosPagadosPanel } from "@/components/pedidos/pedidos-pagados-panel";
 import { PedidoRapidoPanel } from "@/components/pedidos/pedido-rapido-panel";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { estadoPedidoTexto, formatoCOP } from "@/lib/format";
@@ -14,8 +16,9 @@ type MedioPago = "efectivo" | "datafono" | "nequi_daviplata" | "transferencia";
 type Motivo = { id: string; texto: string };
 type Cuenta = any;
 type PedidoHistorial = any;
-type ModuloCaja = "cobros" | "pedidos" | "inventario";
+type ModuloCaja = "cobros" | "pedidos" | "pagados" | "inventario";
 type FiltroFechaCobros = "hoy" | "todos";
+type AccionAnulacionCaja = { tipo: "pedido"; pedidoId: string } | { tipo: "item"; pedidoId: string; item: any };
 
 const MAX_CANTIDAD_ITEM_CAJA = 999;
 
@@ -243,12 +246,11 @@ export function CajaOperativa() {
   const [adquirientes, setAdquirientes] = useState<Record<string, { razon_social: string; tipo_id: string; numero_id: string; correo: string; telefono: string }>>({});
   const [envioCanales, setEnvioCanales] = useState<Record<string, "correo" | "whatsapp">>({});
   const [envioDestinos, setEnvioDestinos] = useState<Record<string, string>>({});
-  const [motivoPorPedido, setMotivoPorPedido] = useState<Record<string, string>>({});
-  const [observacionPorPedido, setObservacionPorPedido] = useState<Record<string, string>>({});
   const [cantidadesEditadas, setCantidadesEditadas] = useState<Record<string, string>>({});
   const [mensajesCantidad, setMensajesCantidad] = useState<Record<string, { tipo: "ok" | "error"; texto: string }>>({});
   const [requiereAperturaCaja, setRequiereAperturaCaja] = useState(false);
   const [filtroFechaCobros, setFiltroFechaCobros] = useState<FiltroFechaCobros>("hoy");
+  const [accionAnulacion, setAccionAnulacion] = useState<AccionAnulacionCaja | null>(null);
 
   const manejarResumenCaja = useCallback((resumenCaja: { requiere_apertura?: boolean }) => {
     setRequiereAperturaCaja(Boolean(resumenCaja.requiere_apertura));
@@ -354,15 +356,7 @@ export function CajaOperativa() {
     await cargar();
   }
 
-  async function anularPedido(pedidoId: string) {
-    const motivoId = motivoPorPedido[pedidoId];
-    if (!motivoId) {
-      setMensaje("Selecciona un motivo de anulacion.");
-      return;
-    }
-
-    if (!window.confirm("Esto anula el pedido completo. Para quitar solo un producto usa Anular item en la fila.")) return;
-
+  async function anularPedido(pedidoId: string, motivoId: string, observacion: string) {
     setMensaje(null);
     setProcesando(pedidoId);
 
@@ -371,7 +365,7 @@ export function CajaOperativa() {
       const { error: rpcError } = await supabase.rpc("anular_pedido", {
         p_pedido_id: pedidoId,
         p_motivo_id: motivoId,
-        p_observacion: observacionPorPedido[pedidoId] || null,
+        p_observacion: observacion || null,
       });
 
       if (rpcError) throw new Error(rpcError.message);
@@ -385,13 +379,7 @@ export function CajaOperativa() {
     }
   }
 
-  async function anularItemPedido(item: any, pedidoId: string) {
-    const motivoId = motivoPorPedido[pedidoId];
-    if (!motivoId) {
-      setMensaje("Selecciona un motivo de anulacion.");
-      return;
-    }
-
+  async function anularItemPedido(item: any, pedidoId: string, motivoId: string, observacion: string) {
     setMensaje(null);
     setProcesando(item.id);
 
@@ -400,7 +388,7 @@ export function CajaOperativa() {
       const { error: rpcError } = await supabase.rpc("anular_pedido_item_caja", {
         p_pedido_item_id: item.id,
         p_motivo_id: motivoId,
-        p_observacion: observacionPorPedido[pedidoId] || null,
+        p_observacion: observacion || null,
       });
 
       if (rpcError) throw new Error(rpcError.message);
@@ -412,6 +400,16 @@ export function CajaOperativa() {
     } finally {
       setProcesando(null);
     }
+  }
+
+  async function confirmarAnulacion(motivoId: string, observacion: string) {
+    const accion = accionAnulacion;
+    if (!accion) return;
+
+    if (accion.tipo === "pedido") await anularPedido(accion.pedidoId, motivoId, observacion);
+    else await anularItemPedido(accion.item, accion.pedidoId, motivoId, observacion);
+
+    setAccionAnulacion(null);
   }
 
   async function liberarMesa(cuentaId: string) {
@@ -560,6 +558,7 @@ export function CajaOperativa() {
           <nav className="mt-3 grid gap-2" aria-label="Modulos de caja">
             <button type="button" onClick={() => setModuloActivo("cobros")} className={moduloActivo === "cobros" ? "tap-target rounded-md bg-oro px-3 py-2 text-left font-black text-carbon" : "tap-target rounded-md border border-antiguo/20 bg-carbon px-3 py-2 text-left font-bold text-crema"}>Cobros</button>
             <button type="button" onClick={() => setModuloActivo("pedidos")} className={moduloActivo === "pedidos" ? "tap-target rounded-md bg-oro px-3 py-2 text-left font-black text-carbon" : "tap-target rounded-md border border-antiguo/20 bg-carbon px-3 py-2 text-left font-bold text-crema"}>Pedidos</button>
+            <button type="button" onClick={() => setModuloActivo("pagados")} className={moduloActivo === "pagados" ? "tap-target rounded-md bg-oro px-3 py-2 text-left font-black text-carbon" : "tap-target rounded-md border border-antiguo/20 bg-carbon px-3 py-2 text-left font-bold text-crema"}>Pedidos pagados</button>
             <button type="button" onClick={() => setModuloActivo("inventario")} className={moduloActivo === "inventario" ? "tap-target rounded-md bg-oro px-3 py-2 text-left font-black text-carbon" : "tap-target rounded-md border border-antiguo/20 bg-carbon px-3 py-2 text-left font-bold text-crema"}>Inventario</button>
           </nav>
         </aside>
@@ -567,7 +566,7 @@ export function CajaOperativa() {
         <header className="flex flex-col gap-3 border-b border-antiguo/15 pb-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-sm font-bold uppercase tracking-wide text-oro">Centro de Mando</p>
-            <h1 className="text-2xl font-black text-crema sm:text-3xl">{moduloActivo === "inventario" ? "Inventario" : moduloActivo === "pedidos" ? "Pedidos" : "Cuentas y cobros"}</h1>
+            <h1 className="text-2xl font-black text-crema sm:text-3xl">{moduloActivo === "inventario" ? "Inventario" : moduloActivo === "pagados" ? "Pedidos pagados" : moduloActivo === "pedidos" ? "Pedidos" : "Cuentas y cobros"}</h1>
             <p className="text-sm text-antiguo/70">{perfil?.nombre}</p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -579,6 +578,8 @@ export function CajaOperativa() {
 
         {moduloActivo === "inventario" ? (
           <InventarioConsultaPanel />
+        ) : moduloActivo === "pagados" ? (
+          <PedidosPagadosPanel modo="caja" />
         ) : moduloActivo === "pedidos" ? (
           <PedidoRapidoPanel
             perfil={perfil!}
@@ -699,7 +700,7 @@ export function CajaOperativa() {
                               />
                               <button type="button" onClick={() => cambiarCantidadEditada(item, 1)} disabled={procesando === item.id} className="h-9 rounded-md border border-antiguo/20 bg-espresso text-lg font-black disabled:opacity-40">+</button>
                               <button type="button" onClick={() => guardarCantidadItem(item)} disabled={procesando === item.id || !cambioPendiente} className="h-9 rounded-md bg-oro px-3 text-xs font-black text-carbon disabled:opacity-40">{procesando === item.id ? "Guardando..." : "Guardar"}</button>
-                              <button type="button" onClick={() => anularItemPedido(item, pedido.id)} disabled={procesando === item.id || procesando === pedido.id} className="col-span-4 h-9 rounded-md border border-red-300/30 bg-red-950/30 px-2 text-xs font-bold text-red-100 disabled:opacity-40">Anular item</button>
+                              <button type="button" onClick={() => setAccionAnulacion({ tipo: "item", pedidoId: pedido.id, item })} disabled={procesando === item.id || procesando === pedido.id} className="col-span-4 h-9 rounded-md border border-red-300/30 bg-red-950/30 px-2 text-xs font-bold text-red-100 disabled:opacity-40">Anular item</button>
                             </div>
                             {mensajeCantidad ? <p className={mensajeCantidad.tipo === "ok" ? "text-xs font-bold text-dorado sm:col-span-2 sm:text-right" : "text-xs font-bold text-red-200 sm:col-span-2 sm:text-right"}>{mensajeCantidad.texto}</p> : null}
                           </li>
@@ -708,13 +709,8 @@ export function CajaOperativa() {
                       </ul>
 
                       {pedido.estado !== "anulado" ? (
-                        <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
-                          <select value={motivoPorPedido[pedido.id] ?? ""} onChange={(event) => setMotivoPorPedido((actual) => ({ ...actual, [pedido.id]: event.target.value }))} className="tap-target rounded-md border border-antiguo/20 bg-espresso px-3 text-crema">
-                            <option value="">Motivo anulacion</option>
-                            {motivos.map((motivo) => <option key={motivo.id} value={motivo.id}>{motivo.texto}</option>)}
-                          </select>
-                          <input value={observacionPorPedido[pedido.id] ?? ""} onChange={(event) => setObservacionPorPedido((actual) => ({ ...actual, [pedido.id]: event.target.value }))} placeholder="Observacion" className="tap-target rounded-md border border-antiguo/20 bg-espresso px-3 text-crema placeholder:text-antiguo/50" />
-                          <button disabled={procesando === pedido.id} onClick={() => anularPedido(pedido.id)} className="tap-target rounded-md border border-red-300/30 bg-red-950/30 px-3 text-sm font-bold text-red-100 disabled:opacity-50">Anular pedido completo</button>
+                        <div className="mt-3">
+                          <button type="button" disabled={procesando === pedido.id} onClick={() => setAccionAnulacion({ tipo: "pedido", pedidoId: pedido.id })} className="tap-target w-full rounded-md border border-red-300/30 bg-red-950/30 px-3 text-sm font-bold text-red-100 disabled:opacity-50">Anular pedido completo</button>
                         </div>
                       ) : null}
                     </section>
@@ -867,6 +863,16 @@ export function CajaOperativa() {
         )}
       </section>
       </div>
+      <ModalMotivo
+        abierto={Boolean(accionAnulacion)}
+        titulo={accionAnulacion?.tipo === "item" ? "Anular item del pedido" : "Anular pedido completo"}
+        descripcion={accionAnulacion?.tipo === "item" ? "Selecciona el motivo para quitar este producto del pedido y devolver inventario si aplica." : "Selecciona el motivo para anular el pedido completo y devolver inventario si aplica."}
+        textoConfirmar="Anular"
+        motivos={motivos}
+        procesando={Boolean(procesando)}
+        onCerrar={() => setAccionAnulacion(null)}
+        onConfirmar={confirmarAnulacion}
+      />
     </main>
   );
 }
