@@ -481,7 +481,7 @@ export function CajaOperativa() {
       await cargar();
     } catch (err) {
       const errorTexto = err instanceof Error ? err.message : "No se pudo guardar la cantidad.";
-      const texto = errorTexto === "stock_insuficiente" ? "No hay stock suficiente para subir esa cantidad." : errorTexto;
+      const texto = errorTexto === "stock_insuficiente" ? "No se pudo ajustar inventario para ese cambio." : errorTexto;
       setMensaje(texto);
       setMensajesCantidad((mensajes) => ({ ...mensajes, [item.id]: { tipo: "error", texto } }));
     } finally {

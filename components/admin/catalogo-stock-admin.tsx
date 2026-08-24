@@ -57,6 +57,9 @@ type ResumenValorInventario = {
   valor_venta: number;
   margen_potencial: number;
   productos_sin_costo: number;
+  productos_deficit?: number;
+  unidades_deficit?: number;
+  valor_deficit_reposicion?: number;
 };
 type CargaAdvertencia = { seccion: string; mensaje: string };
 type MovimientoDescuento = {
@@ -91,16 +94,18 @@ type MovimientoDescuento = {
 type ProductoForm = { id: string | null; nombre: string; categoriaId: string; precio: string; costo: string; codigo: string; minimo: string; presentacion: string; factor: string; activo: boolean };
 type StockInlineForm = { nombre: string; precio: string; costo: string; stock: string; minimo: string };
 type EstadoStockTab = "activos" | "inactivos";
-type FiltroStockAdmin = "todos" | "en_cero" | "bajo" | "disponible" | "rango";
+type FiltroStockAdmin = "todos" | "deficit" | "en_cero" | "bajo" | "disponible" | "rango";
 type TipoDescuentoFiltro = "todos" | "venta" | "ajuste" | "merma" | "consumo_interno";
 type OrdenStockAdmin = "prioridad" | "stock_asc" | "stock_desc" | "nombre" | "precio_asc" | "precio_desc" | "costo_asc" | "costo_desc" | "estado";
 type ComboFormItem = { producto_id: string; cantidad: string };
 type ComboForm = { id: string | null; nombre: string; precio: string; items: ComboFormItem[]; activo: boolean };
 type ProveedorForm = { id: string | null; nombre: string; nit: string; contacto: string; telefono: string; correo: string; direccion: string; observacion: string; activo: boolean };
+type CompraLineaForm = { producto_id: string; modo: "unidades" | "presentacion"; cantidad: string };
 
 const productoInicial: ProductoForm = { id: null, nombre: "", categoriaId: "", precio: "", costo: "", codigo: "", minimo: "0", presentacion: "unidad", factor: "1", activo: true };
 const comboInicial: ComboForm = { id: null, nombre: "", precio: "", items: [{ producto_id: "", cantidad: "1" }], activo: true };
 const proveedorInicial: ProveedorForm = { id: null, nombre: "", nit: "", contacto: "", telefono: "", correo: "", direccion: "", observacion: "", activo: true };
+const compraLineaInicial: CompraLineaForm = { producto_id: "", modo: "unidades", cantidad: "" };
 const BUCKET_IMAGENES_CATALOGO = "catalogo-imagenes";
 
 function comboItems(combo: Combo) {
@@ -177,6 +182,7 @@ function coincideFiltroStock(item: ItemStock, filtro: FiltroStockAdmin, minimo: 
 
   if (stockMin !== null && stock < stockMin) return false;
   if (stockMax !== null && stock > stockMax) return false;
+  if (filtro === "deficit") return stock < 0;
   if (filtro === "en_cero") return stock <= 0;
   if (filtro === "bajo") return item.tipo_item === "producto" && stock > 0 && stock <= minimoNumero(item);
   if (filtro === "disponible") return stock > 0 && (item.tipo_item === "combo" || stock > minimoNumero(item));
@@ -269,9 +275,11 @@ function construirItemsStockFallback(productos: Producto[], combos: Combo[], cat
 
 function calcularResumenInventario(items: ItemStock[], productosActivos: number): ResumenValorInventario {
   const productosFisicos = items.filter((item) => item.tipo_item === "producto" && item.activo);
-  const unidadesStock = productosFisicos.reduce((total, item) => total + Number(item.stock_disponible ?? 0), 0);
-  const valorCosto = productosFisicos.reduce((total, item) => total + Number(item.stock_disponible ?? 0) * Number(item.costo_estimado ?? 0), 0);
-  const valorVenta = productosFisicos.reduce((total, item) => total + Number(item.stock_disponible ?? 0) * Number(item.precio_venta ?? 0), 0);
+  const unidadesStock = productosFisicos.reduce((total, item) => total + Math.max(Number(item.stock_disponible ?? 0), 0), 0);
+  const valorCosto = productosFisicos.reduce((total, item) => total + Math.max(Number(item.stock_disponible ?? 0), 0) * Number(item.costo_estimado ?? 0), 0);
+  const valorVenta = productosFisicos.reduce((total, item) => total + Math.max(Number(item.stock_disponible ?? 0), 0) * Number(item.precio_venta ?? 0), 0);
+  const unidadesDeficit = productosFisicos.reduce((total, item) => total + Math.abs(Math.min(Number(item.stock_disponible ?? 0), 0)), 0);
+  const valorDeficit = productosFisicos.reduce((total, item) => total + Math.abs(Math.min(Number(item.stock_disponible ?? 0), 0)) * Number(item.costo_estimado ?? 0), 0);
 
   return {
     productos_activos: productosFisicos.length || productosActivos,
@@ -280,6 +288,9 @@ function calcularResumenInventario(items: ItemStock[], productosActivos: number)
     valor_venta: valorVenta,
     margen_potencial: valorVenta - valorCosto,
     productos_sin_costo: productosFisicos.filter((item) => Number(item.costo_estimado ?? 0) <= 0).length,
+    productos_deficit: productosFisicos.filter((item) => Number(item.stock_disponible ?? 0) < 0).length,
+    unidades_deficit: unidadesDeficit,
+    valor_deficit_reposicion: valorDeficit,
   };
 }
 function proveedorAForm(proveedor: Proveedor): ProveedorForm {
@@ -315,9 +326,9 @@ export function CatalogoStockAdminPanel() {
   const [comboForm, setComboForm] = useState<ComboForm>(comboInicial);
   const [proveedorForm, setProveedorForm] = useState<ProveedorForm>(proveedorInicial);
   const [compraProveedor, setCompraProveedor] = useState("");
-  const [compraProducto, setCompraProducto] = useState("");
-  const [compraModo, setCompraModo] = useState<"unidades" | "presentacion">("unidades");
-  const [compraCantidad, setCompraCantidad] = useState("");
+  const [compraFecha, setCompraFecha] = useState(() => new Date().toISOString().slice(0, 10));
+  const [compraObservacion, setCompraObservacion] = useState("");
+  const [compraLineas, setCompraLineas] = useState<CompraLineaForm[]>([{ ...compraLineaInicial }]);
   const [ajusteProducto, setAjusteProducto] = useState("");
   const [ajusteCantidad, setAjusteCantidad] = useState("");
   const [ajusteMotivo, setAjusteMotivo] = useState("");
@@ -387,11 +398,28 @@ export function CatalogoStockAdminPanel() {
   }, [cargar]);
 
   const productosActivos = productos.filter((producto) => producto.activo);
-  const productoCompraSeleccionado = productos.find((producto) => producto.id === compraProducto) ?? null;
-  const costoCompraCatalogo = Number(productoCompraSeleccionado?.costo_unitario_actual ?? 0);
-  const factorCompraAplicado = compraModo === "presentacion" ? Number(productoCompraSeleccionado?.factor_compra ?? 1) : 1;
-  const unidadesCompraEstimadas = Number(compraCantidad || 0) * factorCompraAplicado;
-  const totalCompraEstimado = unidadesCompraEstimadas * costoCompraCatalogo;
+  const productosPorId = useMemo(() => new Map(productos.map((producto) => [producto.id, producto])), [productos]);
+  const compraLineasCalculadas = useMemo(() => compraLineas.map((linea) => {
+    const producto = productosPorId.get(linea.producto_id) ?? null;
+    const cantidad = Number(linea.cantidad || 0);
+    const factor = producto && linea.modo === "presentacion" ? Number(producto.factor_compra ?? 1) : 1;
+    const unidades = cantidad * factor;
+    const costo = Number(producto?.costo_unitario_actual ?? 0);
+    return {
+      ...linea,
+      producto,
+      cantidad,
+      factor,
+      unidades,
+      costo,
+      subtotal: unidades * costo,
+      stockProyectado: producto ? Number(producto.stock_actual ?? 0) + unidades : null,
+      valida: Boolean(producto && Number.isInteger(cantidad) && cantidad > 0 && costo > 0),
+    };
+  }), [compraLineas, productosPorId]);
+  const compraTotalEstimado = compraLineasCalculadas.reduce((total, linea) => total + linea.subtotal, 0);
+  const compraUnidadesEstimadas = compraLineasCalculadas.reduce((total, linea) => total + linea.unidades, 0);
+  const compraPuedeRegistrarse = Boolean(compraProveedor && compraFecha && compraLineasCalculadas.length > 0 && compraLineasCalculadas.every((linea) => linea.valida));
   const proveedoresActivos = proveedores.filter((proveedor) => proveedor.activo);
   const categoriasItemsStock = useMemo(() => {
     return Array.from(new Set(itemsStock.map((item) => item.categoria ?? "Sin categoria"))).sort((a, b) => a.localeCompare(b, "es"));
@@ -491,11 +519,26 @@ export function CatalogoStockAdminPanel() {
     });
   }
 
+  function editarProductoCatalogo(producto: Producto, costoActual: number) {
+    setProductoForm({
+      id: producto.id,
+      nombre: producto.nombre,
+      categoriaId: producto.categoria_id ?? "",
+      precio: String(producto.precio_venta),
+      costo: String(costoActual),
+      codigo: producto.codigo_interno ?? "",
+      minimo: String(producto.stock_minimo),
+      presentacion: producto.presentacion_compra,
+      factor: String(producto.factor_compra),
+      activo: producto.activo,
+    });
+  }
+
   async function registrarCompra(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!productoCompraSeleccionado || costoCompraCatalogo <= 0) {
-      setMensaje("Configura primero el costo de compra del producto en catalogo.");
+    if (!compraPuedeRegistrarse) {
+      setMensaje("Completa proveedor, fecha y lineas con producto, cantidad y costo de catalogo.");
       return;
     }
 
@@ -503,18 +546,37 @@ export function CatalogoStockAdminPanel() {
     await ejecutar(
       () => supabase.rpc("registrar_compra", {
         p_proveedor_id: compraProveedor,
-        p_items: [{
-          producto_id: compraProducto,
-          modo: compraModo,
-          cantidad_ingresada: Number(compraCantidad),
-        }],
-        p_fecha: new Date().toISOString().slice(0, 10),
-        p_observacion: null,
+        p_items: compraLineasCalculadas.map((linea) => ({
+          producto_id: linea.producto_id,
+          modo: linea.modo,
+          cantidad_ingresada: linea.cantidad,
+        })),
+        p_fecha: compraFecha,
+        p_observacion: compraObservacion || null,
       }),
-      "Compra registrada con costo de catalogo y stock actualizado.",
+      `Compra registrada: ${compraLineasCalculadas.length} linea(s), ${compraUnidadesEstimadas} unidad(es).`,
     );
-    setCompraCantidad("");
+    setCompraLineas([{ ...compraLineaInicial }]);
+    setCompraObservacion("");
   }
+
+  function actualizarLineaCompra(index: number, cambios: Partial<CompraLineaForm>) {
+    setCompraLineas((actual) => actual.map((linea, lineaIndex) => (
+      lineaIndex === index ? { ...linea, ...cambios } : linea
+    )));
+  }
+
+  function agregarLineaCompra() {
+    setCompraLineas((actual) => [...actual, { ...compraLineaInicial }]);
+  }
+
+  function quitarLineaCompra(index: number) {
+    setCompraLineas((actual) => {
+      const siguientes = actual.filter((_, lineaIndex) => lineaIndex !== index);
+      return siguientes.length > 0 ? siguientes : [{ ...compraLineaInicial }];
+    });
+  }
+
   async function guardarCombo(event?: FormEvent<HTMLFormElement>, form = comboForm) {
     event?.preventDefault();
     const items = comboFormItemsValidos(form);
@@ -652,7 +714,6 @@ export function CatalogoStockAdminPanel() {
     const nombre = valores?.nombre?.trim() ?? item.nombre;
     const precio = Number(valores?.precio ?? item.precio_venta);
     const costo = Number(valores?.costo ?? item.costo_estimado ?? 0);
-    const stock = Number(valores?.stock ?? item.stock_disponible ?? 0);
     const minimo = Number(valores?.minimo ?? item.stock_minimo ?? 0);
 
     if (nombre.length < 2) {
@@ -665,8 +726,8 @@ export function CatalogoStockAdminPanel() {
       return;
     }
 
-    if (item.tipo_item === "producto" && (!Number.isInteger(stock) || !Number.isInteger(minimo) || stock < 0 || minimo < 0)) {
-      setMensaje("Stock y minimo deben ser numeros enteros mayores o iguales a cero.");
+    if (item.tipo_item === "producto" && (!Number.isInteger(minimo) || minimo < 0)) {
+      setMensaje("El stock minimo debe ser un numero entero mayor o igual a cero.");
       return;
     }
 
@@ -679,7 +740,7 @@ export function CatalogoStockAdminPanel() {
           p_nombre: nombre,
           p_precio_venta: precio,
           p_costo_unitario: costo,
-          p_stock_actual: stock,
+          p_stock_actual: Number(item.stock_disponible ?? 0),
           p_stock_minimo: minimo,
         })
       : await supabase.rpc("guardar_combo_inline_admin", {
@@ -769,13 +830,13 @@ export function CatalogoStockAdminPanel() {
         </div>
       ) : null}
 
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
         <div className="rounded-lg border border-antiguo/15 bg-espresso p-4 shadow-suave">
           <p className="text-xs font-bold uppercase tracking-wide text-antiguo/60">Productos activos</p>
           <p className="mt-1 text-2xl font-black text-crema">{resumenInventario?.productos_activos ?? productosActivos.length}</p>
         </div>
         <div className="rounded-lg border border-antiguo/15 bg-espresso p-4 shadow-suave">
-          <p className="text-xs font-bold uppercase tracking-wide text-antiguo/60">Unidades en stock</p>
+          <p className="text-xs font-bold uppercase tracking-wide text-antiguo/60">Unidades disponibles</p>
           <p className="mt-1 text-2xl font-black text-crema">{resumenInventario?.unidades_stock ?? 0}</p>
         </div>
         <div className="rounded-lg border border-antiguo/15 bg-espresso p-4 shadow-suave">
@@ -790,6 +851,11 @@ export function CatalogoStockAdminPanel() {
           <p className="text-xs font-bold uppercase tracking-wide text-antiguo/60">Margen potencial</p>
           <p className="mt-1 text-xl font-black text-green-100">{formatoCOP(resumenInventario?.margen_potencial ?? 0)}</p>
           {(resumenInventario?.productos_sin_costo ?? 0) > 0 ? <p className="mt-1 text-xs font-bold text-red-100">{resumenInventario?.productos_sin_costo} sin costo</p> : null}
+        </div>
+        <div className="rounded-lg border border-red-300/25 bg-red-950/20 p-4 shadow-suave">
+          <p className="text-xs font-bold uppercase tracking-wide text-antiguo/60">Deficit pendiente</p>
+          <p className="mt-1 text-2xl font-black text-red-100">{resumenInventario?.unidades_deficit ?? 0}</p>
+          <p className="mt-1 text-xs font-bold text-antiguo/70">{resumenInventario?.productos_deficit ?? 0} producto(s) / {formatoCOP(resumenInventario?.valor_deficit_reposicion ?? 0)}</p>
         </div>
       </section>
 
@@ -813,13 +879,14 @@ export function CatalogoStockAdminPanel() {
             </select>
             <select value={filtroStock} onChange={(event) => setFiltroStock(event.target.value as FiltroStockAdmin)} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
               <option value="todos">Todo el stock</option>
+              <option value="deficit">Deficit</option>
               <option value="en_cero">Stock en cero</option>
               <option value="bajo">Stock bajo</option>
               <option value="disponible">Disponible</option>
               <option value="rango">Rango manual</option>
             </select>
-            <input value={stockMinFiltro} onChange={(event) => setStockMinFiltro(event.target.value)} type="number" min="0" inputMode="numeric" placeholder="Stock min" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema placeholder:text-antiguo/50" />
-            <input value={stockMaxFiltro} onChange={(event) => setStockMaxFiltro(event.target.value)} type="number" min="0" inputMode="numeric" placeholder="Stock max" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema placeholder:text-antiguo/50" />
+            <input value={stockMinFiltro} onChange={(event) => setStockMinFiltro(event.target.value)} type="number" inputMode="numeric" placeholder="Stock min" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema placeholder:text-antiguo/50" />
+            <input value={stockMaxFiltro} onChange={(event) => setStockMaxFiltro(event.target.value)} type="number" inputMode="numeric" placeholder="Stock max" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema placeholder:text-antiguo/50" />
             <select value={ordenStock} onChange={(event) => setOrdenStock(event.target.value as OrdenStockAdmin)} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
               <option value="prioridad">Prioridad stock</option>
               <option value="stock_asc">Stock menor primero</option>
@@ -858,9 +925,7 @@ export function CatalogoStockAdminPanel() {
                 <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
                   <label className="text-xs font-bold text-antiguo/75">
                     Stock
-                    {editandoStock && item.tipo_item === "producto" ? (
-                      <input type="number" min="0" inputMode="numeric" value={stockInline[item.item_id]?.stock ?? String(item.stock_disponible ?? 0)} onChange={(event) => setStockInline((actual) => ({ ...actual, [item.item_id]: { ...(actual[item.item_id] ?? { nombre: item.nombre, precio: String(item.precio_venta ?? 0), costo: String(item.costo_estimado ?? 0), minimo: String(item.stock_minimo ?? 0) }), stock: event.target.value } }))} className="tap-target mt-1 w-full rounded-md border border-antiguo/20 bg-espresso px-2 text-crema" />
-                    ) : <span className="mt-1 block rounded-md border border-antiguo/10 bg-espresso p-2 text-crema">{item.stock_disponible ?? "-"}</span>}
+                    <span className="mt-1 block rounded-md border border-antiguo/10 bg-espresso p-2 text-crema">{item.stock_disponible ?? "-"}</span>
                   </label>
                   <label className="text-xs font-bold text-antiguo/75">
                     Minimo
@@ -893,6 +958,7 @@ export function CatalogoStockAdminPanel() {
                   ) : null}
                   {!editandoStock ? <button onClick={() => iniciarEdicionStock(item)} className="tap-target rounded-md border border-antiguo/20 px-3 text-xs font-bold">Editar</button> : null}
                   {!editandoStock ? <ControlImagenCatalogo item={item} compacto /> : null}
+                  {producto && !editandoStock ? <button onClick={() => editarProductoCatalogo(producto, Number(item.costo_estimado ?? 0))} className="tap-target rounded-md border border-antiguo/20 px-3 text-xs font-bold">Catalogo</button> : null}
                   {producto && !editandoStock ? <button onClick={() => cambiarEstadoProducto(producto, !producto.activo, Number(item.costo_estimado ?? 0))} className={producto.activo ? "tap-target rounded-md border border-red-300/30 px-3 text-xs font-bold text-red-100" : "tap-target rounded-md border border-green-300/30 px-3 text-xs font-bold text-green-100"}>{producto.activo ? "Eliminar" : "Reactivar"}</button> : null}
                   {combo && !editandoStock ? <button onClick={() => editarCombo(combo)} className="tap-target rounded-md border border-antiguo/20 px-3 text-xs font-bold">Componentes</button> : null}
                   {combo && !editandoStock ? <button onClick={() => cambiarEstadoCombo(combo, !combo.activo)} className={combo.activo ? "tap-target rounded-md border border-red-300/30 px-3 text-xs font-bold text-red-100" : "tap-target rounded-md border border-green-300/30 px-3 text-xs font-bold text-green-100"}>{combo.activo ? "Eliminar" : "Reactivar"}</button> : null}
@@ -937,16 +1003,7 @@ export function CatalogoStockAdminPanel() {
                     <td className="py-3 pr-3 font-bold text-crema">{editandoStock ? <input value={stockInline[item.item_id]?.nombre ?? item.nombre} onChange={(event) => setStockInline((actual) => ({ ...actual, [item.item_id]: { ...(actual[item.item_id] ?? { precio: String(item.precio_venta ?? 0), costo: String(item.costo_estimado ?? 0), stock: String(item.stock_disponible ?? 0), minimo: String(item.stock_minimo ?? 0) }), nombre: event.target.value } }))} className="tap-target w-56 rounded-md border border-antiguo/20 bg-carbon px-2 text-crema" /> : item.nombre}</td>
                     <td className="py-3 pr-3">{item.categoria ?? "-"}</td>
                     <td className={Number(item.stock_disponible ?? 0) <= Number(item.stock_minimo ?? -1) ? "py-3 pr-3 font-black text-dorado" : "py-3 pr-3"}>
-                      {editandoStock && item.tipo_item === "producto" ? (
-                        <input
-                          type="number"
-                          min="0"
-                          inputMode="numeric"
-                          value={stockInline[item.item_id]?.stock ?? String(item.stock_disponible ?? 0)}
-                          onChange={(event) => setStockInline((actual) => ({ ...actual, [item.item_id]: { ...(actual[item.item_id] ?? { nombre: item.nombre, precio: String(item.precio_venta ?? 0), costo: String(item.costo_estimado ?? 0), minimo: String(item.stock_minimo ?? 0) }), stock: event.target.value } }))}
-                          className="tap-target w-24 rounded-md border border-antiguo/20 bg-carbon px-2 text-crema"
-                        />
-                      ) : item.stock_disponible ?? "-"}
+                      {item.stock_disponible ?? "-"}
                     </td>
                     <td className="py-3 pr-3">
                       {editandoStock && item.tipo_item === "producto" ? (
@@ -975,6 +1032,7 @@ export function CatalogoStockAdminPanel() {
                           </>
                         ) : null}
                         {!editandoStock ? <button onClick={() => iniciarEdicionStock(item)} className="rounded-md border border-antiguo/20 px-2 py-1 text-xs font-bold">Editar</button> : null}
+                        {producto && !editandoStock ? <button onClick={() => editarProductoCatalogo(producto, Number(item.costo_estimado ?? 0))} className="rounded-md border border-antiguo/20 px-2 py-1 text-xs font-bold">Catalogo</button> : null}
                         {producto && !editandoStock ? <button onClick={() => cambiarEstadoProducto(producto, !producto.activo, Number(item.costo_estimado ?? 0))} className={producto.activo ? "rounded-md border border-red-300/30 px-2 py-1 text-xs font-bold text-red-100" : "rounded-md border border-green-300/30 px-2 py-1 text-xs font-bold text-green-100"}>{producto.activo ? "Eliminar" : "Reactivar"}</button> : null}
                         {combo && !editandoStock ? <button onClick={() => editarCombo(combo)} className="rounded-md border border-antiguo/20 px-2 py-1 text-xs font-bold">Componentes</button> : null}
                         {combo && !editandoStock ? <button onClick={() => cambiarEstadoCombo(combo, !combo.activo)} className={combo.activo ? "rounded-md border border-red-300/30 px-2 py-1 text-xs font-bold text-red-100" : "rounded-md border border-green-300/30 px-2 py-1 text-xs font-bold text-green-100"}>{combo.activo ? "Eliminar" : "Reactivar"}</button> : null}
@@ -1114,33 +1172,46 @@ export function CatalogoStockAdminPanel() {
         <details className="rounded-md border border-antiguo/15 bg-carbon p-3">
           <summary className="cursor-pointer text-lg font-black text-crema">Compra</summary>
           <form onSubmit={registrarCompra} className="mt-3 grid gap-2">
-            <select value={compraProveedor} onChange={(event) => setCompraProveedor(event.target.value)} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
-              <option value="">Proveedor obligatorio</option>
-              {proveedoresActivos.map((proveedor) => <option key={proveedor.id} value={proveedor.id}>{proveedor.nombre}</option>)}
-            </select>
-            <select value={compraProducto} onChange={(event) => setCompraProducto(event.target.value)} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
-              <option value="">Producto</option>
-              {productosActivos.map((producto) => <option key={producto.id} value={producto.id}>{producto.nombre}</option>)}
-            </select>
-            <select value={compraModo} onChange={(event) => setCompraModo(event.target.value as "unidades" | "presentacion")} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
-              <option value="unidades">Unidades</option>
-              <option value="presentacion">Presentacion de compra</option>
-            </select>
             <div className="grid gap-2 sm:grid-cols-2">
-              <input value={compraCantidad} onChange={(event) => setCompraCantidad(event.target.value)} type="number" min="1" placeholder="Cantidad" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
-              <div className="rounded-md border border-antiguo/20 bg-carbon px-3 py-2 text-sm">
-                <p className="text-xs font-bold text-antiguo/60">Costo catalogo</p>
-                <p className={costoCompraCatalogo > 0 ? "font-black text-dorado" : "font-black text-red-100"}>{productoCompraSeleccionado ? formatoCOP(costoCompraCatalogo) : "Selecciona producto"}</p>
+              <select value={compraProveedor} onChange={(event) => setCompraProveedor(event.target.value)} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
+                <option value="">Proveedor obligatorio</option>
+                {proveedoresActivos.map((proveedor) => <option key={proveedor.id} value={proveedor.id}>{proveedor.nombre}</option>)}
+              </select>
+              <input type="date" value={compraFecha} onChange={(event) => setCompraFecha(event.target.value)} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
+            </div>
+            <input value={compraObservacion} onChange={(event) => setCompraObservacion(event.target.value)} placeholder="Observacion" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema placeholder:text-antiguo/50" />
+            <div className="grid gap-2">
+              {compraLineasCalculadas.map((linea, index) => (
+                <div key={index} className={linea.producto && linea.costo <= 0 ? "rounded-md border border-red-300/30 bg-red-950/20 p-2" : "rounded-md border border-antiguo/10 bg-espresso p-2"}>
+                  <div className="grid gap-2 xl:grid-cols-[minmax(0,1fr)_130px_110px_auto]">
+                    <select value={linea.producto_id} onChange={(event) => actualizarLineaCompra(index, { producto_id: event.target.value })} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
+                      <option value="">Producto linea {index + 1}</option>
+                      {productosActivos.map((producto) => <option key={producto.id} value={producto.id}>{producto.nombre} - stock {producto.stock_actual}</option>)}
+                    </select>
+                    <select value={linea.modo} onChange={(event) => actualizarLineaCompra(index, { modo: event.target.value as "unidades" | "presentacion" })} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
+                      <option value="unidades">Unidades</option>
+                      <option value="presentacion">Presentacion</option>
+                    </select>
+                    <input value={linea.cantidad} onChange={(event) => actualizarLineaCompra(index, { cantidad: event.target.value })} type="number" min="1" inputMode="numeric" placeholder="Cantidad" className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema placeholder:text-antiguo/50" />
+                    <button type="button" onClick={() => quitarLineaCompra(index)} disabled={compraLineas.length === 1} className="tap-target rounded-md border border-red-300/30 px-3 text-xs font-bold text-red-100 disabled:opacity-40">Quitar</button>
+                  </div>
+                  <div className="mt-2 grid grid-cols-2 gap-2 text-xs sm:grid-cols-5">
+                    <div className="rounded-md border border-antiguo/10 bg-carbon p-2"><p className="text-antiguo/60">Stock</p><p className="font-black text-crema">{linea.producto ? linea.producto.stock_actual : "-"}</p></div>
+                    <div className="rounded-md border border-antiguo/10 bg-carbon p-2"><p className="text-antiguo/60">Factor</p><p className="font-black text-dorado">{linea.factor}</p></div>
+                    <div className="rounded-md border border-antiguo/10 bg-carbon p-2"><p className="text-antiguo/60">Entran</p><p className="font-black text-dorado">{linea.unidades || 0}</p></div>
+                    <div className="rounded-md border border-antiguo/10 bg-carbon p-2"><p className="text-antiguo/60">Despues</p><p className="font-black text-crema">{linea.stockProyectado ?? "-"}</p></div>
+                    <div className="rounded-md border border-antiguo/10 bg-carbon p-2"><p className="text-antiguo/60">Subtotal</p><p className="font-black text-dorado">{formatoCOP(linea.subtotal)}</p></div>
+                  </div>
+                  {linea.producto && linea.costo <= 0 ? <p className="mt-2 text-xs font-bold text-red-100">Este producto no tiene costo configurado.</p> : null}
                 </div>
-              </div>
-            {productoCompraSeleccionado ? (
-              <div className={costoCompraCatalogo > 0 ? "rounded-md border border-antiguo/10 bg-carbon p-3 text-sm text-antiguo/80" : "rounded-md border border-red-300/30 bg-red-950/20 p-3 text-sm text-red-100"}>
-                {costoCompraCatalogo > 0
-                  ? `Entraran ${unidadesCompraEstimadas || 0} unidad(es). Total estimado: ${formatoCOP(totalCompraEstimado)}.`
-                  : "Este producto no tiene costo configurado. Editalo en la tabla antes de registrar compra."}
-                </div>
-            ) : null}
-            <button disabled={guardando || !compraProveedor || !compraProducto || !compraCantidad || costoCompraCatalogo <= 0} className="tap-target rounded-md bg-oro px-4 font-black text-carbon disabled:opacity-50">Registrar compra</button>
+              ))}
+            </div>
+            <button type="button" onClick={agregarLineaCompra} className="tap-target rounded-md border border-antiguo/20 px-3 font-bold text-crema">Agregar linea</button>
+            <div className="rounded-md border border-antiguo/10 bg-espresso p-3 text-sm">
+              <p className="font-black text-crema">{compraLineasCalculadas.length} linea(s) / {compraUnidadesEstimadas} unidad(es)</p>
+              <p className="text-lg font-black text-dorado">{formatoCOP(compraTotalEstimado)}</p>
+            </div>
+            <button disabled={guardando || !compraPuedeRegistrarse} className="tap-target rounded-md bg-oro px-4 font-black text-carbon disabled:opacity-50">Registrar compra</button>
           </form>
         </details>
 

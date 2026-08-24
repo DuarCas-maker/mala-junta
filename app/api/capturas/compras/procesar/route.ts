@@ -202,7 +202,7 @@ async function cargarContexto(service: ReturnType<typeof supabaseService>) {
       categoria: categoria?.nombre ?? null,
       presentacion_compra: presentacion,
       factor_compra: Math.max(1, Math.round(Number(producto.factor_compra ?? 1))),
-      stock_actual: Math.max(0, Math.round(Number(producto.stock_actual ?? 0))),
+      stock_actual: Math.round(Number(producto.stock_actual ?? 0)),
       normalizado: normalizar([producto.nombre, presentacion, producto.codigo_interno, categoria?.nombre].filter(Boolean).join(" ")),
     } satisfies CatalogoProducto;
   });

@@ -35,6 +35,11 @@ function estadoStock(item: ItemStock) {
   return { texto: "Disponible", clase: "border-green-400/25 bg-green-950/20 text-green-100", prioridad: 3 };
 }
 
+function stockVisibleCaja(item: ItemStock) {
+  const stock = Number(item.stock_disponible ?? 0);
+  return stock <= 0 ? "Sin stock" : String(stock);
+}
+
 function detalleItem(item: ItemStock) {
   if (item.tipo_item === "producto") return `${item.presentacion_compra ?? "unidad"} x${item.factor_compra ?? 1}`;
   const componentes = item.componentes ?? [];
@@ -174,7 +179,7 @@ export function InventarioConsultaPanel() {
                   <span className={`shrink-0 rounded-md border px-2 py-1 text-xs font-bold ${estado.clase}`}>{estado.texto}</span>
                 </div>
                 <div className="mt-3 grid grid-cols-3 gap-2 text-sm">
-                  <div className="rounded-md border border-antiguo/10 bg-espresso p-2"><p className="text-xs text-antiguo/60">Stock</p><p className="font-black text-crema">{item.stock_disponible ?? "-"}</p></div>
+                  <div className="rounded-md border border-antiguo/10 bg-espresso p-2"><p className="text-xs text-antiguo/60">Stock</p><p className="font-black text-crema">{stockVisibleCaja(item)}</p></div>
                   <div className="rounded-md border border-antiguo/10 bg-espresso p-2"><p className="text-xs text-antiguo/60">Minimo</p><p className="font-bold text-crema">{item.stock_minimo ?? "-"}</p></div>
                   <div className="rounded-md border border-antiguo/10 bg-espresso p-2"><p className="text-xs text-antiguo/60">Precio</p><p className="font-black text-dorado">{formatoCOP(item.precio_venta)}</p></div>
                 </div>
@@ -208,7 +213,7 @@ export function InventarioConsultaPanel() {
                     <td className="py-3 pr-3 font-bold text-dorado">{item.tipo_item === "producto" ? "Producto" : "Combo"}</td>
                     <td className="py-3 pr-3 font-bold text-crema">{item.nombre}</td>
                     <td className="py-3 pr-3">{item.categoria ?? "-"}</td>
-                    <td className="py-3 pr-3 font-black text-crema">{item.stock_disponible ?? "-"}</td>
+                    <td className="py-3 pr-3 font-black text-crema">{stockVisibleCaja(item)}</td>
                     <td className="py-3 pr-3">{item.stock_minimo ?? "-"}</td>
                     <td className="py-3 pr-3 font-bold text-dorado">{formatoCOP(item.precio_venta)}</td>
                     <td className="max-w-[320px] py-3 pr-3 text-xs text-antiguo/75">{detalleItem(item)}</td>

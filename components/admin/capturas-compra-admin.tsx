@@ -193,7 +193,7 @@ function recalcularLinea(linea: CapturaCompraLinea, producto?: ProductoCatalogo 
   const unidades = cantidad * factor;
   const costo = Math.max(0, Math.round(Number(producto?.costo_unitario_actual ?? linea.costo_unitario_catalogo ?? 0)));
   const precio = Math.max(0, Math.round(Number(producto?.precio_venta ?? linea.precio_venta_catalogo ?? 0)));
-  const stockActual = producto ? Math.max(0, Math.round(Number(producto.stock_actual ?? 0))) : linea.stock_actual_snapshot;
+  const stockActual = producto ? Math.round(Number(producto.stock_actual ?? 0)) : linea.stock_actual_snapshot;
   const stockProyectado = stockActual === null || stockActual === undefined ? null : stockActual + unidades;
   const siguiente = {
     ...linea,
