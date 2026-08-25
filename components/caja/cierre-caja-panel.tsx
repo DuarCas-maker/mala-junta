@@ -11,11 +11,17 @@ type ResumenCaja = {
   cierre_abierto: any | null;
   efectivo_pagos?: number;
   retiros_total?: number;
+  gastos_efectivo_total?: number;
+  gastos_total?: number;
+  compras_inventario_total?: number;
+  gastos_urgencia_total?: number;
+  salidas_efectivo_total?: number;
   efectivo_esperado?: number;
   pagos_por_medio?: Record<string, number>;
   propinas_total?: number;
   retiros?: any[];
-  cuentas?: { abiertas?: number; pendientes?: number; pagadas_turno?: number };
+  gastos?: any[];
+  cuentas?: { abiertas?: number; pendientes?: number; pagadas_turno?: number; pendientes_cobrados?: number };
 };
 
 const medios: Record<string, string> = {
@@ -151,7 +157,7 @@ export function CierreCajaPanel({ perfil, onResumenChange }: { perfil: Perfil; o
 
       {mensaje ? <p className="mt-3 rounded-md border border-antiguo/15 bg-carbon p-3 text-sm">{mensaje}</p> : null}
 
-      <div className="mt-4 grid gap-3 md:grid-cols-4">
+      <div className="mt-4 grid gap-3 md:grid-cols-5">
         <div className="rounded-md border border-antiguo/10 bg-carbon p-3">
           <p className="text-xs text-antiguo/60">Base</p>
           <p className="text-lg font-black text-crema">{formatoCOP(cierre?.base_inicial)}</p>
@@ -163,6 +169,10 @@ export function CierreCajaPanel({ perfil, onResumenChange }: { perfil: Perfil; o
         <div className="rounded-md border border-antiguo/10 bg-carbon p-3">
           <p className="text-xs text-antiguo/60">Retiros</p>
           <p className="text-lg font-black text-crema">{formatoCOP(resumen.retiros_total)}</p>
+        </div>
+        <div className="rounded-md border border-antiguo/10 bg-carbon p-3">
+          <p className="text-xs text-antiguo/60">Compras/gastos efectivo</p>
+          <p className="text-lg font-black text-crema">{formatoCOP(resumen.gastos_efectivo_total)}</p>
         </div>
         <div className="rounded-md border border-oro/25 bg-carbon p-3">
           <p className="text-xs text-antiguo/60">Efectivo esperado</p>
@@ -184,6 +194,7 @@ export function CierreCajaPanel({ perfil, onResumenChange }: { perfil: Perfil; o
           <ul className="mt-2 space-y-1 text-sm text-antiguo/80">
             <li className="flex justify-between"><span>Abiertas/por cobrar</span><span>{resumen.cuentas?.abiertas ?? 0}</span></li>
             <li className="flex justify-between"><span>Pendientes</span><span>{resumen.cuentas?.pendientes ?? 0}</span></li>
+            <li className="flex justify-between"><span>Pendientes cobrados</span><span>{resumen.cuentas?.pendientes_cobrados ?? 0}</span></li>
             <li className="flex justify-between"><span>Pagadas turno</span><span>{resumen.cuentas?.pagadas_turno ?? 0}</span></li>
           </ul>
         </section>
@@ -213,7 +224,7 @@ export function CierreCajaPanel({ perfil, onResumenChange }: { perfil: Perfil; o
         </form>
 
         <section className="rounded-md border border-antiguo/10 bg-carbon p-3">
-          <p className="text-sm font-bold text-dorado">Retiros del turno</p>
+          <p className="text-sm font-bold text-dorado">Salidas del turno</p>
           <ul className="mt-2 max-h-48 space-y-2 overflow-auto text-sm text-antiguo/80">
             {(resumen.retiros ?? []).map((retiro) => (
               <li key={retiro.id} className="border-t border-antiguo/10 pt-2">
@@ -221,7 +232,16 @@ export function CierreCajaPanel({ perfil, onResumenChange }: { perfil: Perfil; o
                 {retiro.numero_factura ? <p className="text-xs text-antiguo/50">Factura: {retiro.numero_factura}</p> : null}
               </li>
             ))}
-            {(resumen.retiros ?? []).length === 0 ? <li className="text-antiguo/50">Sin retiros registrados.</li> : null}
+            {(resumen.gastos ?? []).map((gasto) => (
+              <li key={gasto.id} className="border-t border-antiguo/10 pt-2">
+                <div className="flex justify-between gap-3">
+                  <span>{gasto.tipo === "compra_inventario" ? "Compra inventario" : gasto.categoria ?? "Gasto urgente"} - {medios[gasto.medio] ?? gasto.medio}</span>
+                  <span>{formatoCOP(gasto.monto)}</span>
+                </div>
+                {gasto.numero_factura ? <p className="text-xs text-antiguo/50">Factura: {gasto.numero_factura}</p> : null}
+              </li>
+            ))}
+            {(resumen.retiros ?? []).length === 0 && (resumen.gastos ?? []).length === 0 ? <li className="text-antiguo/50">Sin salidas registradas.</li> : null}
           </ul>
         </section>
       </div>

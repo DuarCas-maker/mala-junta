@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { ComprasGastosPanel } from "@/components/caja/compras-gastos-panel";
 import { InventarioConsultaPanel } from "@/components/caja/inventario-consulta-panel";
 import { CapturasVentaPanel } from "@/components/caja/capturas-venta-panel";
 import { CierreCajaPanel } from "@/components/caja/cierre-caja-panel";
@@ -16,7 +17,7 @@ type MedioPago = "efectivo" | "datafono" | "nequi_daviplata" | "transferencia";
 type Motivo = { id: string; texto: string };
 type Cuenta = any;
 type PedidoHistorial = any;
-type ModuloCaja = "cobros" | "pedidos" | "pagados" | "inventario";
+type ModuloCaja = "cobros" | "pedidos" | "pagados" | "compras_gastos" | "inventario";
 type FiltroFechaCobros = "hoy" | "todos";
 type AccionAnulacionCaja = { tipo: "pedido"; pedidoId: string } | { tipo: "item"; pedidoId: string; item: any };
 
@@ -220,6 +221,7 @@ function fechaMsCuenta(cuenta: Cuenta) {
 }
 
 function cuentaTienePedidoDelDia(cuenta: Cuenta, fechaISO: string) {
+  if (cuenta.estado === "pendiente") return true;
   const pedidos = pedidosCuenta(cuenta);
   if (pedidos.length === 0) return fechaLocalISO(fechaPrincipalCuenta(cuenta)) === fechaISO;
   return pedidos.some((pedido: PedidoHistorial) => fechaLocalISO(pedido.enviado_at) === fechaISO);
@@ -528,6 +530,24 @@ export function CajaOperativa() {
     setMensaje(null);
     setProcesando(cuentaId);
     const supabase = supabaseBrowser();
+
+    if (dejaPendiente && pagos.length === 0) {
+      const { error: pendienteError } = await supabase.rpc("marcar_cuenta_pendiente_caja", {
+        p_cuenta_id: cuentaId,
+        p_responsable_pendiente: responsable,
+        p_observacion: "Marcada pendiente desde caja sin abono.",
+      });
+
+      if (pendienteError) setMensaje(pendienteError.message === "caja_no_abierta" ? "Debes abrir caja antes de marcar pendientes." : pendienteError.message);
+      else {
+        setMensaje("Cuenta marcada como pendiente.");
+        limpiarPago(cuentaId);
+      }
+      setProcesando(null);
+      await cargar();
+      return;
+    }
+
     const { data: pagoData, error: rpcError } = await supabase.rpc("registrar_pagos_cuenta_dian", {
       p_cuenta_id: cuentaId,
       p_pagos: pagos,
@@ -547,6 +567,17 @@ export function CajaOperativa() {
     await cargar();
   }
 
+  async function quitarPendiente(cuentaId: string) {
+    setMensaje(null);
+    setProcesando(cuentaId);
+    const supabase = supabaseBrowser();
+    const { error: rpcError } = await supabase.rpc("quitar_pendiente_cuenta_caja", { p_cuenta_id: cuentaId });
+    if (rpcError) setMensaje(rpcError.message);
+    else setMensaje("La cuenta volvio a Por cobrar.");
+    setProcesando(null);
+    await cargar();
+  }
+
   if (cargando) return <main className="min-h-screen p-5 text-champana">Cargando...</main>;
   if (error) return <main className="min-h-screen p-5 text-champana">{error}</main>;
 
@@ -559,6 +590,7 @@ export function CajaOperativa() {
             <button type="button" onClick={() => setModuloActivo("cobros")} className={moduloActivo === "cobros" ? "tap-target rounded-md bg-oro px-3 py-2 text-left font-black text-carbon" : "tap-target rounded-md border border-antiguo/20 bg-carbon px-3 py-2 text-left font-bold text-crema"}>Cobros</button>
             <button type="button" onClick={() => setModuloActivo("pedidos")} className={moduloActivo === "pedidos" ? "tap-target rounded-md bg-oro px-3 py-2 text-left font-black text-carbon" : "tap-target rounded-md border border-antiguo/20 bg-carbon px-3 py-2 text-left font-bold text-crema"}>Pedidos</button>
             <button type="button" onClick={() => setModuloActivo("pagados")} className={moduloActivo === "pagados" ? "tap-target rounded-md bg-oro px-3 py-2 text-left font-black text-carbon" : "tap-target rounded-md border border-antiguo/20 bg-carbon px-3 py-2 text-left font-bold text-crema"}>Pedidos pagados</button>
+            <button type="button" onClick={() => setModuloActivo("compras_gastos")} className={moduloActivo === "compras_gastos" ? "tap-target rounded-md bg-oro px-3 py-2 text-left font-black text-carbon" : "tap-target rounded-md border border-antiguo/20 bg-carbon px-3 py-2 text-left font-bold text-crema"}>Compras y gastos</button>
             <button type="button" onClick={() => setModuloActivo("inventario")} className={moduloActivo === "inventario" ? "tap-target rounded-md bg-oro px-3 py-2 text-left font-black text-carbon" : "tap-target rounded-md border border-antiguo/20 bg-carbon px-3 py-2 text-left font-bold text-crema"}>Inventario</button>
           </nav>
         </aside>
@@ -566,7 +598,7 @@ export function CajaOperativa() {
         <header className="flex flex-col gap-3 border-b border-antiguo/15 pb-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-sm font-bold uppercase tracking-wide text-oro">Centro de Mando</p>
-            <h1 className="text-2xl font-black text-crema sm:text-3xl">{moduloActivo === "inventario" ? "Inventario" : moduloActivo === "pagados" ? "Pedidos pagados" : moduloActivo === "pedidos" ? "Pedidos" : "Cuentas y cobros"}</h1>
+            <h1 className="text-2xl font-black text-crema sm:text-3xl">{moduloActivo === "inventario" ? "Inventario" : moduloActivo === "compras_gastos" ? "Compras y gastos" : moduloActivo === "pagados" ? "Pedidos pagados" : moduloActivo === "pedidos" ? "Pedidos" : "Cuentas y cobros"}</h1>
             <p className="text-sm text-antiguo/70">{perfil?.nombre}</p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -578,6 +610,8 @@ export function CajaOperativa() {
 
         {moduloActivo === "inventario" ? (
           <InventarioConsultaPanel />
+        ) : moduloActivo === "compras_gastos" ? (
+          <ComprasGastosPanel />
         ) : moduloActivo === "pagados" ? (
           <PedidosPagadosPanel modo="caja" />
         ) : moduloActivo === "pedidos" ? (
@@ -646,6 +680,7 @@ export function CajaOperativa() {
                     <h2 className="text-xl font-black text-crema">{estadoCobroCuenta(cuenta)}</h2>
                     <p className="text-xs text-antiguo/60">Estado cuenta: {cuenta.estado}</p>
                     {cuenta.responsable_pendiente ? <p className="text-sm text-dorado">Pendiente: {cuenta.responsable_pendiente}</p> : null}
+                    {cuenta.es_pendiente_anterior ? <p className="mt-1 inline-flex rounded-md border border-oro/30 bg-oro/10 px-2 py-1 text-xs font-black uppercase tracking-wide text-dorado">Pendiente anterior</p> : null}
                   </div>
                   <div className="text-left sm:text-right">
                     <p className="text-sm text-antiguo/70">Saldo</p>
@@ -812,6 +847,9 @@ export function CajaOperativa() {
                     <button type="button" onClick={() => setMontosPago((actual) => ({ ...actual, [cuenta.id]: String(saldo) }))} className="tap-target rounded-md border border-antiguo/20 px-3 text-sm font-bold">Valor exacto</button>
                     <button type="button" disabled={bloqueada || requiereAperturaCaja} onClick={() => registrarPago(cuenta)} className="tap-target rounded-md bg-oro px-3 text-sm font-black text-carbon disabled:opacity-50">{requiereAperturaCaja ? "Abre caja primero" : "Registrar pago"}</button>
                   </div>
+                  {cuenta.estado === "pendiente" ? (
+                    <button type="button" disabled={bloqueada} onClick={() => quitarPendiente(cuenta.id)} className="tap-target mt-2 w-full rounded-md border border-antiguo/20 px-3 text-sm font-bold text-crema disabled:opacity-50">Quitar pendiente</button>
+                  ) : null}
                 </section>
                 )}
               </article>
