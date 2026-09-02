@@ -35,6 +35,7 @@ export function CierreCajaPanel({ perfil, onResumenChange }: { perfil: Perfil; o
   const [resumen, setResumen] = useState<ResumenCaja | null>(null);
   const [motivos, setMotivos] = useState<Motivo[]>([]);
   const [baseInicial, setBaseInicial] = useState("");
+  const [notaApertura, setNotaApertura] = useState("");
   const [retiroMonto, setRetiroMonto] = useState("");
   const [retiroMotivoId, setRetiroMotivoId] = useState("");
   const [retiroObservacion, setRetiroObservacion] = useState("");
@@ -71,11 +72,12 @@ export function CierreCajaPanel({ perfil, onResumenChange }: { perfil: Perfil; o
     setProcesando(true);
     setMensaje(null);
     const supabase = supabaseBrowser();
-    const { error } = await supabase.rpc("abrir_caja", { p_base_inicial: Number(baseInicial) });
+    const { error } = await supabase.rpc("abrir_caja", { p_base_inicial: Number(baseInicial), p_nota_apertura: notaApertura || null });
     if (error) setMensaje(error.message);
     else {
       setMensaje("Caja abierta.");
       setBaseInicial("");
+      setNotaApertura("");
       await cargar();
     }
     setProcesando(false);
@@ -133,8 +135,9 @@ export function CierreCajaPanel({ perfil, onResumenChange }: { perfil: Perfil; o
         <h2 className="text-xl font-black text-crema">Apertura de caja</h2>
         <p className="mt-1 text-sm text-antiguo/70">Debes registrar base inicial antes de cobrar o registrar retiros.</p>
         {mensaje ? <p className="mt-3 rounded-md border border-antiguo/15 bg-carbon p-3 text-sm">{mensaje}</p> : null}
-        <form onSubmit={abrirCaja} className="mt-4 grid gap-2 sm:grid-cols-[1fr_auto]">
+        <form onSubmit={abrirCaja} className="mt-4 grid gap-2">
           <input value={baseInicial} onChange={(event) => setBaseInicial(event.target.value)} type="number" min="0" inputMode="numeric" placeholder="Base inicial" className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
+          <textarea value={notaApertura} onChange={(event) => setNotaApertura(event.target.value)} rows={3} placeholder="Nota de apertura opcional" className="rounded-md border border-antiguo/20 bg-carbon p-3 text-sm text-crema placeholder:text-antiguo/50" />
           <button disabled={procesando || baseInicial === ""} className="tap-target rounded-md bg-oro px-4 font-black text-carbon disabled:opacity-50">Abrir caja</button>
         </form>
       </section>

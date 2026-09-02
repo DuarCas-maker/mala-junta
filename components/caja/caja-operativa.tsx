@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { ComprasGastosPanel } from "@/components/caja/compras-gastos-panel";
 import { InventarioConsultaPanel } from "@/components/caja/inventario-consulta-panel";
+import { HistorialCajaPanel } from "@/components/caja/historial-caja-panel";
 import { CapturasVentaPanel } from "@/components/caja/capturas-venta-panel";
 import { CierreCajaPanel } from "@/components/caja/cierre-caja-panel";
 import { ModalMotivo } from "@/components/pedidos/modal-motivo";
@@ -17,7 +18,7 @@ type MedioPago = "efectivo" | "datafono" | "nequi_daviplata" | "transferencia";
 type Motivo = { id: string; texto: string };
 type Cuenta = any;
 type PedidoHistorial = any;
-type ModuloCaja = "cobros" | "pedidos" | "pagados" | "compras_gastos" | "inventario";
+type ModuloCaja = "cobros" | "pedidos" | "pagados" | "compras_gastos" | "historial_caja" | "inventario";
 type FiltroFechaCobros = "hoy" | "todos";
 type AccionAnulacionCaja = { tipo: "pedido"; pedidoId: string } | { tipo: "item"; pedidoId: string; item: any };
 
@@ -591,6 +592,7 @@ export function CajaOperativa() {
             <button type="button" onClick={() => setModuloActivo("pedidos")} className={moduloActivo === "pedidos" ? "tap-target rounded-md bg-oro px-3 py-2 text-left font-black text-carbon" : "tap-target rounded-md border border-antiguo/20 bg-carbon px-3 py-2 text-left font-bold text-crema"}>Pedidos</button>
             <button type="button" onClick={() => setModuloActivo("pagados")} className={moduloActivo === "pagados" ? "tap-target rounded-md bg-oro px-3 py-2 text-left font-black text-carbon" : "tap-target rounded-md border border-antiguo/20 bg-carbon px-3 py-2 text-left font-bold text-crema"}>Pedidos pagados</button>
             <button type="button" onClick={() => setModuloActivo("compras_gastos")} className={moduloActivo === "compras_gastos" ? "tap-target rounded-md bg-oro px-3 py-2 text-left font-black text-carbon" : "tap-target rounded-md border border-antiguo/20 bg-carbon px-3 py-2 text-left font-bold text-crema"}>Compras y gastos</button>
+            <button type="button" onClick={() => setModuloActivo("historial_caja")} className={moduloActivo === "historial_caja" ? "tap-target rounded-md bg-oro px-3 py-2 text-left font-black text-carbon" : "tap-target rounded-md border border-antiguo/20 bg-carbon px-3 py-2 text-left font-bold text-crema"}>Historial caja</button>
             <button type="button" onClick={() => setModuloActivo("inventario")} className={moduloActivo === "inventario" ? "tap-target rounded-md bg-oro px-3 py-2 text-left font-black text-carbon" : "tap-target rounded-md border border-antiguo/20 bg-carbon px-3 py-2 text-left font-bold text-crema"}>Inventario</button>
           </nav>
         </aside>
@@ -598,7 +600,7 @@ export function CajaOperativa() {
         <header className="flex flex-col gap-3 border-b border-antiguo/15 pb-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-sm font-bold uppercase tracking-wide text-oro">Centro de Mando</p>
-            <h1 className="text-2xl font-black text-crema sm:text-3xl">{moduloActivo === "inventario" ? "Inventario" : moduloActivo === "compras_gastos" ? "Compras y gastos" : moduloActivo === "pagados" ? "Pedidos pagados" : moduloActivo === "pedidos" ? "Pedidos" : "Cuentas y cobros"}</h1>
+            <h1 className="text-2xl font-black text-crema sm:text-3xl">{moduloActivo === "inventario" ? "Inventario" : moduloActivo === "historial_caja" ? "Historial caja" : moduloActivo === "compras_gastos" ? "Compras y gastos" : moduloActivo === "pagados" ? "Pedidos pagados" : moduloActivo === "pedidos" ? "Pedidos" : "Cuentas y cobros"}</h1>
             <p className="text-sm text-antiguo/70">{perfil?.nombre}</p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -610,6 +612,8 @@ export function CajaOperativa() {
 
         {moduloActivo === "inventario" ? (
           <InventarioConsultaPanel />
+        ) : moduloActivo === "historial_caja" ? (
+          <HistorialCajaPanel />
         ) : moduloActivo === "compras_gastos" ? (
           <ComprasGastosPanel />
         ) : moduloActivo === "pagados" ? (
