@@ -56,6 +56,8 @@ const mediosPago: { id: MedioPago; nombre: string }[] = [
   { id: "transferencia", nombre: "Transferencia" },
 ];
 
+const presentacionesCompra = ["Unidad", "50 ml", "200 ml", "350 ml", "375 ml", "700 ml", "750 ml", "1 Lt", "1,5 Lt", "2 Lt"];
+
 const datosIniciales: DatosComprasGastos = {
   requiere_apertura: true,
   categorias_gasto: [],
@@ -76,6 +78,12 @@ function nombreMedio(medio: string) {
 
 function uidLocal() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function etiquetaProducto(producto?: Pick<ProductoCompra, "nombre" | "presentacion_compra"> | null) {
+  if (!producto) return "Producto";
+  const presentacion = producto.presentacion_compra?.trim();
+  return presentacion ? `${producto.nombre} - ${presentacion}` : producto.nombre;
 }
 
 export function ComprasGastosPanel() {
@@ -109,7 +117,7 @@ export function ComprasGastosPanel() {
   const [nuevoProductoPrecio, setNuevoProductoPrecio] = useState("");
   const [nuevoProductoCosto, setNuevoProductoCosto] = useState("");
   const [nuevoProductoStockMinimo, setNuevoProductoStockMinimo] = useState("0");
-  const [nuevoProductoPresentacion, setNuevoProductoPresentacion] = useState("unidad");
+  const [nuevoProductoPresentacion, setNuevoProductoPresentacion] = useState("Unidad");
   const [nuevoProductoFactor, setNuevoProductoFactor] = useState("1");
 
   const cargar = useCallback(async () => {
@@ -252,7 +260,7 @@ export function ComprasGastosPanel() {
       p_costo_unitario: Number(nuevoProductoCosto || 0),
       p_codigo_interno: null,
       p_stock_minimo: Number(nuevoProductoStockMinimo || 0),
-      p_presentacion_compra: nuevoProductoPresentacion || "unidad",
+      p_presentacion_compra: nuevoProductoPresentacion || "Unidad",
       p_factor_compra: Number(nuevoProductoFactor || 1),
     });
 
@@ -266,7 +274,7 @@ export function ComprasGastosPanel() {
       setNuevoProductoPrecio("");
       setNuevoProductoCosto("");
       setNuevoProductoStockMinimo("0");
-      setNuevoProductoPresentacion("unidad");
+      setNuevoProductoPresentacion("Unidad");
       setNuevoProductoFactor("1");
       await cargar();
       setProductoId(producto.id);
@@ -335,7 +343,7 @@ export function ComprasGastosPanel() {
               <div className="mt-2 grid gap-2 lg:grid-cols-[minmax(0,1fr)_135px_110px_140px_auto]">
                 <select value={productoId} onChange={(event) => setProductoId(event.target.value)} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-espresso px-3 text-crema">
                   <option value="">Producto</option>
-                  {datos.productos.map((producto) => <option key={producto.id} value={producto.id}>{producto.nombre}</option>)}
+                  {datos.productos.map((producto) => <option key={producto.id} value={producto.id}>{etiquetaProducto(producto)}</option>)}
                 </select>
                 <select value={modo} onChange={(event) => setModo(event.target.value as ModoCompra)} className="tap-target rounded-md border border-antiguo/20 bg-espresso px-3 text-crema">
                   <option value="unidades">Unidades</option>
@@ -355,7 +363,7 @@ export function ComprasGastosPanel() {
                   const subtotal = unidades * linea.costo_unitario;
                   return (
                     <li key={linea.localId} className="grid gap-2 rounded-md border border-antiguo/10 bg-espresso p-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center">
-                      <span className="font-bold text-crema">{producto?.nombre ?? "Producto"} - {unidades} unidad(es)</span>
+                      <span className="font-bold text-crema">{etiquetaProducto(producto)} - {unidades} unidad(es)</span>
                       <span className="font-black text-dorado">{formatoCOP(subtotal)}</span>
                       <button type="button" onClick={() => setLineas((actual) => actual.filter((item) => item.localId !== linea.localId))} className="rounded-md border border-red-300/30 px-3 py-1 text-xs font-bold text-red-100">Quitar</button>
                     </li>
@@ -390,7 +398,10 @@ export function ComprasGastosPanel() {
               </div>
               <div className="grid gap-2 sm:grid-cols-3">
                 <input value={nuevoProductoStockMinimo} onChange={(event) => setNuevoProductoStockMinimo(event.target.value)} type="number" min="0" placeholder="Minimo" className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema placeholder:text-antiguo/50" />
-                <input value={nuevoProductoPresentacion} onChange={(event) => setNuevoProductoPresentacion(event.target.value)} placeholder="Presentacion" className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema placeholder:text-antiguo/50" />
+                <select value={nuevoProductoPresentacion} onChange={(event) => setNuevoProductoPresentacion(event.target.value)} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
+                  {nuevoProductoPresentacion && !presentacionesCompra.includes(nuevoProductoPresentacion) ? <option value={nuevoProductoPresentacion}>{nuevoProductoPresentacion}</option> : null}
+                  {presentacionesCompra.map((presentacion) => <option key={presentacion} value={presentacion}>{presentacion}</option>)}
+                </select>
                 <input value={nuevoProductoFactor} onChange={(event) => setNuevoProductoFactor(event.target.value)} type="number" min="1" placeholder="Factor" className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema placeholder:text-antiguo/50" />
               </div>
             </div>

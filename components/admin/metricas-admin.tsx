@@ -6,7 +6,9 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  ComposedChart,
   Legend,
+  LabelList,
   Line,
   LineChart,
   ReferenceLine,
@@ -56,6 +58,9 @@ type LineaVenta = { dia_negocio: string; item_nombre: string; categoria: string;
 type EstadoCuenta = { segmento: string; estado_cuenta: string; cuentas: number; pedidos: number; venta_bruta: number; pagado: number; faltante: number };
 type EstadoDia = EstadoCuenta & { dia_negocio: string };
 type AnuladoDia = { dia_negocio: string; pedidos_anulados: number; cuentas_anuladas: number; monto_anulado: number };
+type IngresoMedioPago = { jornada_laboral: string; efectivo: number; datafono: number; nequi_daviplata: number; transferencia: number; total: number };
+type ConsumoHora = { hora: number; etiqueta: string; cantidad: number; valor_total: number };
+type ConsumoDiaJornada = { dia_semana: number; etiqueta: string; cantidad: number; valor_total: number };
 type ProductoEstrella = {
   item_nombre: string;
   categoria: string;
@@ -73,6 +78,7 @@ type ProductoEstrella = {
 type PuntoDesglose = { etiqueta: string; ventas: number; margen: number; costo: number; unidades: number };
 type ModoDesglose = "categoria" | "item";
 type Resultado<T> = { data: T; error: string | null };
+type EjeMoneda = { ticks: number[]; domain: [number, number] };
 
 const hoy = new Date().toISOString().slice(0, 10);
 const hace30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -83,6 +89,13 @@ const coloresEstado: Record<string, string> = {
   por_cobrar: "#7db7ff",
   pendiente: "#d7a2ff",
   abiertas: "#e2b07f",
+};
+
+const coloresMedioPago: Record<keyof Pick<IngresoMedioPago, "efectivo" | "datafono" | "nequi_daviplata" | "transferencia">, string> = {
+  efectivo: "#58d68d",
+  datafono: "#7db7ff",
+  nequi_daviplata: "#f4d35e",
+  transferencia: "#d7a2ff",
 };
 
 const coloresCuadrante: Record<string, string> = {
@@ -132,6 +145,43 @@ function etiquetaCuadrante(cuadrante: string) {
 
 function numero(valor: unknown) {
   return Number(valor ?? 0);
+}
+
+function monedaCorta(valor: unknown) {
+  const numeroValor = numero(valor);
+  if (numeroValor === 0) return "";
+  if (Math.abs(numeroValor) >= 1000000) return `$${(numeroValor / 1000000).toFixed(1)}M`;
+  return `$${Math.round(numeroValor / 1000)}k`;
+}
+
+function monedaEje(valor: unknown) {
+  const numeroValor = numero(valor);
+  if (numeroValor === 0) return "$0";
+  if (Math.abs(numeroValor) < 1000000) return `$${Math.round(numeroValor / 1000)}K`;
+  const millones = numeroValor / 1000000;
+  if (numeroValor === 1000000) return "$1M";
+  if (numeroValor % 1000000 === 0) return `$${millones.toFixed(1)}M`;
+  if (numeroValor % 500000 === 0) return `$${millones.toFixed(1)}M`;
+  return `$${millones.toFixed(2)}M`;
+}
+
+function numeroCorto(valor: unknown) {
+  const numeroValor = numero(valor);
+  if (numeroValor === 0) return "";
+  return numeroValor.toLocaleString("es-CO");
+}
+
+function conEspacioParaEtiquetas(cantidadPuntos: number, series = 1) {
+  return cantidadPuntos * series <= 14;
+}
+
+function construirEjeMoneda(maximo: number): EjeMoneda {
+  const limite = Math.max(1000000, Math.ceil(maximo / 250000) * 250000);
+  const ticks = [0, 200000, 800000, 1000000];
+  for (let valor = 1250000; valor <= limite; valor += 250000) {
+    ticks.push(valor);
+  }
+  return { ticks: ticks.filter((valor, indice, lista) => valor <= limite && lista.indexOf(valor) === indice), domain: [0, limite] };
 }
 
 function descargar(nombre: string, contenido: string, tipo: string) {
@@ -200,6 +250,9 @@ export function MetricasAdminPanel() {
   const [estadosDia, setEstadosDia] = useState<EstadoDia[]>([]);
   const [anulados, setAnulados] = useState<AnuladoDia[]>([]);
   const [productosEstrella, setProductosEstrella] = useState<ProductoEstrella[]>([]);
+  const [ingresosMedioPago, setIngresosMedioPago] = useState<IngresoMedioPago[]>([]);
+  const [consumoHoras, setConsumoHoras] = useState<ConsumoHora[]>([]);
+  const [consumoDiasJornada, setConsumoDiasJornada] = useState<ConsumoDiaJornada[]>([]);
   const [modoDesglose, setModoDesglose] = useState<ModoDesglose>("categoria");
   const [filtroDesglose, setFiltroDesglose] = useState("");
   const [errores, setErrores] = useState<Record<string, string>>({});
@@ -224,6 +277,9 @@ export function MetricasAdminPanel() {
       estadosDiaRes,
       anuladosRes,
       estrellasRes,
+      ingresosMedioRes,
+      consumoHorasRes,
+      consumoDiasJornadaRes,
     ] = await Promise.all([
       resolver<ResumenMetricas>(supabase.rpc("resumen_metricas_admin", args), null as unknown as ResumenMetricas),
       resolver<ProductoMargen[]>(supabase.rpc("metricas_margen_producto_admin", args), []),
@@ -237,6 +293,9 @@ export function MetricasAdminPanel() {
       resolver<EstadoDia[]>(supabase.rpc("metricas_estado_dia_admin", args), []),
       resolver<AnuladoDia[]>(supabase.rpc("metricas_anulados_admin", args), []),
       resolver<ProductoEstrella[]>(supabase.rpc("metricas_productos_estrella_admin", args), []),
+      resolver<IngresoMedioPago[]>(supabase.rpc("metricas_ingresos_medios_pago_admin", args), []),
+      resolver<ConsumoHora[]>(supabase.rpc("metricas_consumo_horas_admin", args), []),
+      resolver<ConsumoDiaJornada[]>(supabase.rpc("metricas_consumo_dias_jornada_admin", args), []),
     ]);
 
     if (!resumenRes.error) setResumen(resumenRes.data);
@@ -251,6 +310,9 @@ export function MetricasAdminPanel() {
     if (!estadosDiaRes.error) setEstadosDia(estadosDiaRes.data);
     if (!anuladosRes.error) setAnulados(anuladosRes.data);
     if (!estrellasRes.error) setProductosEstrella(estrellasRes.data);
+    if (!ingresosMedioRes.error) setIngresosMedioPago(ingresosMedioRes.data);
+    if (!consumoHorasRes.error) setConsumoHoras(consumoHorasRes.data);
+    if (!consumoDiasJornadaRes.error) setConsumoDiasJornada(consumoDiasJornadaRes.data);
 
     setErrores({
       ...(resumenRes.error ? { resumen: resumenRes.error } : {}),
@@ -265,6 +327,9 @@ export function MetricasAdminPanel() {
       ...(estadosDiaRes.error ? { estadosDia: estadosDiaRes.error } : {}),
       ...(anuladosRes.error ? { anulados: anuladosRes.error } : {}),
       ...(estrellasRes.error ? { productosEstrella: estrellasRes.error } : {}),
+      ...(ingresosMedioRes.error ? { ingresosMedioPago: ingresosMedioRes.error } : {}),
+      ...(consumoHorasRes.error ? { consumoHoras: consumoHorasRes.error } : {}),
+      ...(consumoDiasJornadaRes.error ? { consumoDiasJornada: consumoDiasJornadaRes.error } : {}),
     });
     setCargando(false);
   }, [desde, hasta]);
@@ -308,10 +373,17 @@ export function MetricasAdminPanel() {
       const actual = mapa.get(fila.dia_negocio) ?? { dia: fila.dia_negocio, etiqueta: fechaCorta(fila.dia_negocio) };
       const valor = fila.segmento === "cobradas" ? numero(fila.pagado) : numero(fila.venta_bruta);
       actual[fila.segmento] = numero(actual[fila.segmento]) + valor;
+      actual.total = numero(actual.total) + valor;
       mapa.set(fila.dia_negocio, actual);
     });
     return [...mapa.values()].sort((a, b) => String(a.dia).localeCompare(String(b.dia)));
   }, [estadosDia]);
+
+  const ejeVentasIngresos = useMemo(() => {
+    const maximoVentas = estadoDiaGrafica.reduce((maximo, fila) => Math.max(maximo, numero(fila.total)), 0);
+    const maximoIngresos = ingresosMedioPago.reduce((maximo, fila) => Math.max(maximo, numero(fila.total)), 0);
+    return construirEjeMoneda(Math.max(maximoVentas, maximoIngresos));
+  }, [estadoDiaGrafica, ingresosMedioPago]);
 
   const topGanancia = useMemo(() => [...productosEstrella].sort((a, b) => numero(b.ganancia_bruta) - numero(a.ganancia_bruta)).slice(0, 10), [productosEstrella]);
   const topUnidades = useMemo(() => [...productosEstrella].sort((a, b) => numero(b.unidades_vendidas) - numero(a.unidades_vendidas)).slice(0, 10), [productosEstrella]);
@@ -376,7 +448,7 @@ export function MetricasAdminPanel() {
         <div>
           <p className="text-sm font-bold uppercase tracking-wide text-oro">Metricas</p>
           <h2 className="text-2xl font-black text-crema">Ventas y ganancias</h2>
-          <p className="mt-1 text-sm text-antiguo/70">Pedidos normales por fecha de envio; capturas por fecha de venta digitada.</p>
+          <p className="mt-1 text-sm text-antiguo/70">Jornada laboral global: 10:00 a. m. hasta 9:59 a. m. del dia siguiente.</p>
         </div>
         <div className="grid gap-2 md:grid-cols-[auto_auto_auto_150px_minmax(150px,auto)]">
           <button onClick={aplicarUltimos30} className="tap-target rounded-md border border-antiguo/20 px-3 text-sm font-bold">30 dias</button>
@@ -406,23 +478,13 @@ export function MetricasAdminPanel() {
         <Kpi titulo="Anulado" valor={formatoCOP(resumen?.anulado)} detalle={`${resumen?.pedidos_anulados ?? 0} pedidos`} />
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
-        <PanelGrafica titulo="Ventas por estado" subtitulo="Cobradas por pagos registrados; otros estados por venta bruta.">
-          <GraficaEstados datos={datosEstado} />
-        </PanelGrafica>
-        <PanelGrafica titulo="Pagada parcial" subtitulo="Pagado y faltante apilados.">
-          <GraficaParcial datos={parcial} />
-        </PanelGrafica>
-      </div>
+      <PanelGrafica titulo="Ventas por jornada laboral" subtitulo="Segmentadas por estado financiero de la cuenta.">
+        <GraficaEstadoDia datos={estadoDiaGrafica} eje={ejeVentasIngresos} />
+      </PanelGrafica>
 
-      <div className="grid gap-4 xl:grid-cols-[1.3fr_1fr]">
-        <PanelGrafica titulo="Ventas por dia" subtitulo="Segmentadas por estado financiero de la cuenta.">
-          <GraficaEstadoDia datos={estadoDiaGrafica} />
-        </PanelGrafica>
-        <PanelGrafica titulo="Anulados por dia" subtitulo="Monto anulado y cantidad de pedidos/cuentas anuladas.">
-          <GraficaAnulados datos={anulados} />
-        </PanelGrafica>
-      </div>
+      <PanelGrafica titulo="Ingresos por medios de pago" subtitulo="Cada barra representa una jornada laboral y se segmenta por medio de pago.">
+        <GraficaIngresosMedioPago datos={ingresosMedioPago} eje={ejeVentasIngresos} />
+      </PanelGrafica>
 
       <section className="rounded-md border border-antiguo/10 bg-carbon p-3">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
@@ -450,6 +512,26 @@ export function MetricasAdminPanel() {
           <GraficaDesglose datos={puntosDesglose} />
         </div>
       </section>
+
+      <PanelGrafica titulo="Consumo por días de jornada laboral" subtitulo="Cantidad vendida y valor total por lunes a domingo, usando jornada 10:00 a 09:59.">
+        <GraficaConsumoDiaJornada datos={consumoDiasJornada} />
+      </PanelGrafica>
+
+      <PanelGrafica titulo="Horas más comunes de consumo" subtitulo="Valor vendido y cantidad consumida agrupados por hora del pedido.">
+        <GraficaConsumoHora datos={consumoHoras} />
+      </PanelGrafica>
+
+      <PanelGrafica titulo="Ventas por estado" subtitulo="Cobradas por pagos registrados; otros estados por venta bruta.">
+        <GraficaEstados datos={datosEstado} />
+      </PanelGrafica>
+
+      <PanelGrafica titulo="Pago parcial" subtitulo="Pagado y faltante apilados.">
+        <GraficaParcial datos={parcial} />
+      </PanelGrafica>
+
+      <PanelGrafica titulo="Anulados por jornada laboral" subtitulo="Monto anulado y cantidad de pedidos/cuentas anuladas.">
+        <GraficaAnulados datos={anulados} />
+      </PanelGrafica>
 
       <section className="rounded-md border border-antiguo/10 bg-carbon p-3">
         <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
@@ -482,9 +564,9 @@ export function MetricasAdminPanel() {
 
       <div className="grid gap-4 xl:grid-cols-2">
         <Tabla titulo="Margen por producto/combo" filas={productos.map((p) => [p.item_nombre, p.categoria, p.unidades_vendidas, formatoCOP(p.ventas), formatoCOP(p.margen_estimado), `${p.margen_pct ?? 0}%`])} columnas={["Item", "Categoria", "Unid.", "Ventas", "Ganancia", "%"]} onCsv={() => exportarLocal("productos", "csv")} onXls={() => exportarLocal("productos", "xls")} onSql={() => void exportarSql("productos")} />
-        <Tabla titulo="Ventas por dia" filas={dias.map((d) => [d.dia_negocio, formatoCOP(d.ventas), formatoCOP(d.costo_estimado), formatoCOP(d.margen_estimado), `${d.margen_pct ?? 0}%`])} columnas={["Dia", "Ventas", "Costo", "Ganancia", "%"]} onCsv={() => exportarLocal("ventas_dia", "csv")} onXls={() => exportarLocal("ventas_dia", "xls")} />
-        <Tabla titulo="Ventas por mesero" filas={ventasMesero.map((v) => [v.dia_negocio, v.mesero, v.cuentas, v.pedidos, formatoCOP(v.ventas_brutas), formatoCOP(v.ventas_pendientes)])} columnas={["Dia", "Mesero", "Cuentas", "Pedidos", "Ventas", "Pendiente"]} onCsv={() => exportarLocal("ventas_mesero", "csv")} onXls={() => exportarLocal("ventas_mesero", "xls")} onSql={() => void exportarSql("ventas_mesero")} />
-        <Tabla titulo="Cierres de caja" filas={cierres.map((c) => [c.dia_negocio, c.cerrado_por ?? "-", formatoCOP(c.efectivo_esperado), formatoCOP(c.efectivo_contado), formatoCOP(c.diferencia), c.estado])} columnas={["Dia", "Cajero", "Esperado", "Contado", "Dif.", "Estado"]} onCsv={() => exportarLocal("cierres", "csv")} onXls={() => exportarLocal("cierres", "xls")} onSql={() => void exportarSql("cierres")} />
+        <Tabla titulo="Ventas por jornada laboral" filas={dias.map((d) => [d.dia_negocio, formatoCOP(d.ventas), formatoCOP(d.costo_estimado), formatoCOP(d.margen_estimado), `${d.margen_pct ?? 0}%`])} columnas={["Jornada", "Ventas", "Costo", "Ganancia", "%"]} onCsv={() => exportarLocal("ventas_dia", "csv")} onXls={() => exportarLocal("ventas_dia", "xls")} />
+        <Tabla titulo="Ventas por mesero" filas={ventasMesero.map((v) => [v.dia_negocio, v.mesero, v.cuentas, v.pedidos, formatoCOP(v.ventas_brutas), formatoCOP(v.ventas_pendientes)])} columnas={["Jornada", "Mesero", "Cuentas", "Pedidos", "Ventas", "Pendiente"]} onCsv={() => exportarLocal("ventas_mesero", "csv")} onXls={() => exportarLocal("ventas_mesero", "xls")} onSql={() => void exportarSql("ventas_mesero")} />
+        <Tabla titulo="Cierres de caja" filas={cierres.map((c) => [c.dia_negocio, c.cerrado_por ?? "-", formatoCOP(c.efectivo_esperado), formatoCOP(c.efectivo_contado), formatoCOP(c.diferencia), c.estado])} columnas={["Jornada", "Cajero", "Esperado", "Contado", "Dif.", "Estado"]} onCsv={() => exportarLocal("cierres", "csv")} onXls={() => exportarLocal("cierres", "xls")} onSql={() => void exportarSql("cierres")} />
         <Tabla titulo="Rotacion y dias de stock" filas={rotacion.map((r) => [r.producto, r.categoria ?? "-", r.stock_actual, r.stock_minimo, r.unidades_vendidas_30d, r.dias_stock_estimado ?? "-"])} columnas={["Producto", "Categoria", "Stock", "Min", "Venta 30d", "Dias"]} onCsv={() => exportarLocal("rotacion", "csv")} onXls={() => exportarLocal("rotacion", "xls")} />
         <Tabla titulo="Tiempos de preparacion" filas={tiempos.map((t) => [t.dia_negocio, t.mesero, t.minutos_preparacion, t.items])} columnas={["Dia", "Mesero", "Min", "Items"]} onCsv={() => exportarLocal("tiempos", "csv")} onXls={() => exportarLocal("tiempos", "xls")} />
       </div>
@@ -536,6 +618,124 @@ function TooltipMixto({ active, payload, label }: any) {
   );
 }
 
+function TooltipCantidadValor({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null;
+  const punto = payload[0]?.payload ?? {};
+  return (
+    <div className="rounded-md border border-antiguo/20 bg-carbon p-2 text-xs text-crema shadow-suave">
+      <p className="font-bold">{label}</p>
+      <p>Cantidad: {numero(punto.cantidad).toLocaleString("es-CO")}</p>
+      <p>Valor total: {formatoCOP(punto.valor_total)}</p>
+    </div>
+  );
+}
+
+function TooltipMediosPago({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null;
+  const total = payload.reduce((sum: number, item: any) => sum + numero(item.value), 0);
+  return (
+    <div className="rounded-md border border-antiguo/20 bg-carbon p-2 text-xs text-crema shadow-suave">
+      <p className="font-bold">Jornada {label}</p>
+      {payload.map((item: any) => (
+        <p key={item.dataKey} style={{ color: item.color }}>{item.name}: {formatoCOP(item.value)}</p>
+      ))}
+      <p className="mt-1 font-bold text-dorado">Total: {formatoCOP(total)}</p>
+    </div>
+  );
+}
+
+function GraficaIngresosMedioPago({ datos, eje }: { datos: IngresoMedioPago[]; eje: EjeMoneda }) {
+  const conDatos = datos.filter((fila) => numero(fila.total) > 0);
+  if (conDatos.length === 0) return <Vacio texto="Sin ingresos por medios de pago en el rango." />;
+  const normalizados = conDatos.map((fila) => {
+    const orden = ["efectivo", "datafono", "nequi_daviplata", "transferencia"] as const;
+    const superior = [...orden].reverse().find((campo) => numero(fila[campo]) > 0);
+    return {
+      ...fila,
+      etiqueta: fechaCorta(fila.jornada_laboral),
+      label_efectivo: superior === "efectivo" ? fila.total : null,
+      label_datafono: superior === "datafono" ? fila.total : null,
+      label_nequi_daviplata: superior === "nequi_daviplata" ? fila.total : null,
+      label_transferencia: superior === "transferencia" ? fila.total : null,
+    };
+  });
+  const mostrarLabels = conEspacioParaEtiquetas(normalizados.length, 4);
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <BarChart data={normalizados} margin={{ top: 30, right: 16, left: 0, bottom: 0 }}>
+        <CartesianGrid stroke="rgba(224,209,190,0.12)" vertical={false} />
+        <XAxis dataKey="etiqueta" tick={{ fill: "#bda88f", fontSize: 11 }} tickLine={false} axisLine={false} />
+        <YAxis domain={eje.domain} ticks={eje.ticks} tickFormatter={monedaEje} tick={{ fill: "#bda88f", fontSize: 11 }} tickLine={false} axisLine={false} width={64} />
+        <Tooltip content={<TooltipMediosPago />} />
+        <Legend wrapperStyle={{ color: "#e0d1be", fontSize: 12 }} />
+        <Bar dataKey="efectivo" name="Efectivo" stackId="medio" fill={coloresMedioPago.efectivo}>
+          {mostrarLabels ? <LabelList dataKey="efectivo" formatter={monedaCorta} fill="#120d0a" fontSize={10} /> : null}
+          <LabelList dataKey="label_efectivo" position="top" formatter={monedaCorta} fill="#e0d1be" fontSize={11} fontWeight={700} />
+        </Bar>
+        <Bar dataKey="datafono" name="Datafono" stackId="medio" fill={coloresMedioPago.datafono}>
+          {mostrarLabels ? <LabelList dataKey="datafono" formatter={monedaCorta} fill="#120d0a" fontSize={10} /> : null}
+          <LabelList dataKey="label_datafono" position="top" formatter={monedaCorta} fill="#e0d1be" fontSize={11} fontWeight={700} />
+        </Bar>
+        <Bar dataKey="nequi_daviplata" name="Nequi/Daviplata" stackId="medio" fill={coloresMedioPago.nequi_daviplata}>
+          {mostrarLabels ? <LabelList dataKey="nequi_daviplata" formatter={monedaCorta} fill="#120d0a" fontSize={10} /> : null}
+          <LabelList dataKey="label_nequi_daviplata" position="top" formatter={monedaCorta} fill="#e0d1be" fontSize={11} fontWeight={700} />
+        </Bar>
+        <Bar dataKey="transferencia" name="Transferencia" stackId="medio" fill={coloresMedioPago.transferencia} radius={[4, 4, 0, 0]}>
+          {mostrarLabels ? <LabelList dataKey="transferencia" formatter={monedaCorta} fill="#120d0a" fontSize={10} /> : null}
+          <LabelList dataKey="label_transferencia" position="top" formatter={monedaCorta} fill="#e0d1be" fontSize={11} fontWeight={700} />
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+function GraficaConsumoHora({ datos }: { datos: ConsumoHora[] }) {
+  const conDatos = datos.filter((fila) => numero(fila.valor_total) > 0 || numero(fila.cantidad) > 0);
+  if (conDatos.length === 0) return <Vacio texto="Sin consumo por hora en el rango." />;
+  const mostrarLabels = conEspacioParaEtiquetas(conDatos.length);
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <ComposedChart data={conDatos} margin={{ top: 22, right: 18, left: 0, bottom: 0 }}>
+        <CartesianGrid stroke="rgba(224,209,190,0.12)" vertical={false} />
+        <XAxis dataKey="etiqueta" tick={{ fill: "#bda88f", fontSize: 11 }} tickLine={false} axisLine={false} />
+        <YAxis yAxisId="valor" tickFormatter={(value) => `$${Math.round(Number(value) / 1000)}k`} tick={{ fill: "#bda88f", fontSize: 11 }} tickLine={false} axisLine={false} width={58} />
+        <YAxis yAxisId="cantidad" orientation="right" allowDecimals={false} tick={{ fill: "#bda88f", fontSize: 11 }} tickLine={false} axisLine={false} width={38} />
+        <Tooltip content={<TooltipCantidadValor />} />
+        <Legend wrapperStyle={{ color: "#e0d1be", fontSize: 12 }} />
+        <Bar yAxisId="valor" dataKey="valor_total" name="Valor total" fill="#e2b07f" radius={[4, 4, 0, 0]}>
+          {mostrarLabels ? <LabelList dataKey="valor_total" position="top" formatter={monedaCorta} fill="#e0d1be" fontSize={10} /> : null}
+        </Bar>
+        <Line yAxisId="cantidad" type="monotone" dataKey="cantidad" name="Cantidad" stroke="#58d68d" strokeWidth={2} dot={{ r: 3 }}>
+          {mostrarLabels ? <LabelList dataKey="cantidad" position="top" formatter={numeroCorto} fill="#58d68d" fontSize={10} /> : null}
+        </Line>
+      </ComposedChart>
+    </ResponsiveContainer>
+  );
+}
+
+function GraficaConsumoDiaJornada({ datos }: { datos: ConsumoDiaJornada[] }) {
+  const conDatos = datos.filter((fila) => numero(fila.valor_total) > 0 || numero(fila.cantidad) > 0);
+  if (conDatos.length === 0) return <Vacio texto="Sin consumo por dia de jornada en el rango." />;
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <ComposedChart data={datos} margin={{ top: 22, right: 18, left: 0, bottom: 0 }}>
+        <CartesianGrid stroke="rgba(224,209,190,0.12)" vertical={false} />
+        <XAxis dataKey="etiqueta" tick={{ fill: "#bda88f", fontSize: 11 }} tickLine={false} axisLine={false} />
+        <YAxis yAxisId="valor" tickFormatter={(value) => `$${Math.round(Number(value) / 1000)}k`} tick={{ fill: "#bda88f", fontSize: 11 }} tickLine={false} axisLine={false} width={58} />
+        <YAxis yAxisId="cantidad" orientation="right" allowDecimals={false} tick={{ fill: "#bda88f", fontSize: 11 }} tickLine={false} axisLine={false} width={38} />
+        <Tooltip content={<TooltipCantidadValor />} />
+        <Legend wrapperStyle={{ color: "#e0d1be", fontSize: 12 }} />
+        <Bar yAxisId="valor" dataKey="valor_total" name="Valor total" fill="#7db7ff" radius={[4, 4, 0, 0]}>
+          <LabelList dataKey="valor_total" position="top" formatter={monedaCorta} fill="#e0d1be" fontSize={10} />
+        </Bar>
+        <Line yAxisId="cantidad" type="monotone" dataKey="cantidad" name="Cantidad" stroke="#f4d35e" strokeWidth={2} dot={{ r: 3 }}>
+          <LabelList dataKey="cantidad" position="top" formatter={numeroCorto} fill="#f4d35e" fontSize={10} />
+        </Line>
+      </ComposedChart>
+    </ResponsiveContainer>
+  );
+}
+
 function GraficaEstados({ datos }: { datos: { segmento: string; etiqueta: string; valor: number; cuentas: number; pedidos: number }[] }) {
   if (datos.length === 0) return <Vacio texto="Sin datos por estado." />;
   return (
@@ -547,6 +747,7 @@ function GraficaEstados({ datos }: { datos: { segmento: string; etiqueta: string
         <Tooltip content={<TooltipMoneda />} />
         <Bar dataKey="valor" name="Valor" radius={[4, 4, 0, 0]}>
           {datos.map((fila) => <Cell key={fila.segmento} fill={coloresEstado[fila.segmento] ?? "#e2b07f"} />)}
+          {conEspacioParaEtiquetas(datos.length) ? <LabelList dataKey="valor" position="top" formatter={monedaCorta} fill="#e0d1be" fontSize={10} /> : null}
         </Bar>
       </BarChart>
     </ResponsiveContainer>
@@ -564,28 +765,60 @@ function GraficaParcial({ datos }: { datos: { etiqueta: string; pagado: number; 
         <YAxis type="category" dataKey="etiqueta" tick={{ fill: "#bda88f", fontSize: 11 }} tickLine={false} axisLine={false} width={100} />
         <Tooltip content={<TooltipMoneda />} />
         <Legend wrapperStyle={{ color: "#e0d1be", fontSize: 12 }} />
-        <Bar dataKey="pagado" name="Pagado" stackId="parcial" fill="#58d68d" radius={[4, 0, 0, 4]} />
-        <Bar dataKey="faltante" name="Faltante" stackId="parcial" fill="#f4d35e" radius={[0, 4, 4, 0]} />
+        <Bar dataKey="pagado" name="Pagado" stackId="parcial" fill="#58d68d" radius={[4, 0, 0, 4]}>
+          <LabelList dataKey="pagado" formatter={monedaCorta} fill="#120d0a" fontSize={10} />
+        </Bar>
+        <Bar dataKey="faltante" name="Faltante" stackId="parcial" fill="#f4d35e" radius={[0, 4, 4, 0]}>
+          <LabelList dataKey="faltante" formatter={monedaCorta} fill="#120d0a" fontSize={10} />
+        </Bar>
       </BarChart>
     </ResponsiveContainer>
   );
 }
 
-function GraficaEstadoDia({ datos }: { datos: Record<string, string | number>[] }) {
+function GraficaEstadoDia({ datos, eje }: { datos: Record<string, string | number>[]; eje: EjeMoneda }) {
   if (datos.length === 0) return <Vacio texto="Sin ventas en el rango." />;
+  const normalizados = datos.map((fila) => {
+    const orden = ["cobradas", "pagada_parcial", "por_cobrar", "pendiente", "abiertas"] as const;
+    const superior = [...orden].reverse().find((campo) => numero(fila[campo]) > 0);
+    return {
+      ...fila,
+      label_cobradas: superior === "cobradas" ? numero(fila.total) : null,
+      label_pagada_parcial: superior === "pagada_parcial" ? numero(fila.total) : null,
+      label_por_cobrar: superior === "por_cobrar" ? numero(fila.total) : null,
+      label_pendiente: superior === "pendiente" ? numero(fila.total) : null,
+      label_abiertas: superior === "abiertas" ? numero(fila.total) : null,
+    };
+  });
+  const mostrarLabels = conEspacioParaEtiquetas(datos.length, 5);
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <BarChart data={datos} margin={{ top: 12, right: 16, left: 0, bottom: 0 }}>
+      <BarChart data={normalizados} margin={{ top: 30, right: 16, left: 0, bottom: 0 }}>
         <CartesianGrid stroke="rgba(224,209,190,0.12)" vertical={false} />
         <XAxis dataKey="etiqueta" tick={{ fill: "#bda88f", fontSize: 11 }} tickLine={false} axisLine={false} />
-        <YAxis tickFormatter={(value) => `$${Math.round(Number(value) / 1000)}k`} tick={{ fill: "#bda88f", fontSize: 11 }} tickLine={false} axisLine={false} width={58} />
+        <YAxis domain={eje.domain} ticks={eje.ticks} tickFormatter={monedaEje} tick={{ fill: "#bda88f", fontSize: 11 }} tickLine={false} axisLine={false} width={64} />
         <Tooltip content={<TooltipMoneda />} />
         <Legend wrapperStyle={{ color: "#e0d1be", fontSize: 12 }} />
-        <Bar dataKey="cobradas" name="Cobradas" stackId="ventas" fill={coloresEstado.cobradas} />
-        <Bar dataKey="pagada_parcial" name="Parcial" stackId="ventas" fill={coloresEstado.pagada_parcial} />
-        <Bar dataKey="por_cobrar" name="Por cobrar" stackId="ventas" fill={coloresEstado.por_cobrar} />
-        <Bar dataKey="pendiente" name="Pendiente" stackId="ventas" fill={coloresEstado.pendiente} />
-        <Bar dataKey="abiertas" name="Abiertas" stackId="ventas" fill={coloresEstado.abiertas} />
+        <Bar dataKey="cobradas" name="Cobradas" stackId="ventas" fill={coloresEstado.cobradas}>
+          {mostrarLabels ? <LabelList dataKey="cobradas" formatter={monedaCorta} fill="#120d0a" fontSize={10} /> : null}
+          <LabelList dataKey="label_cobradas" position="top" formatter={monedaCorta} fill="#e0d1be" fontSize={11} fontWeight={700} />
+        </Bar>
+        <Bar dataKey="pagada_parcial" name="Parcial" stackId="ventas" fill={coloresEstado.pagada_parcial}>
+          {mostrarLabels ? <LabelList dataKey="pagada_parcial" formatter={monedaCorta} fill="#120d0a" fontSize={10} /> : null}
+          <LabelList dataKey="label_pagada_parcial" position="top" formatter={monedaCorta} fill="#e0d1be" fontSize={11} fontWeight={700} />
+        </Bar>
+        <Bar dataKey="por_cobrar" name="Por cobrar" stackId="ventas" fill={coloresEstado.por_cobrar}>
+          {mostrarLabels ? <LabelList dataKey="por_cobrar" formatter={monedaCorta} fill="#120d0a" fontSize={10} /> : null}
+          <LabelList dataKey="label_por_cobrar" position="top" formatter={monedaCorta} fill="#e0d1be" fontSize={11} fontWeight={700} />
+        </Bar>
+        <Bar dataKey="pendiente" name="Pendiente" stackId="ventas" fill={coloresEstado.pendiente}>
+          {mostrarLabels ? <LabelList dataKey="pendiente" formatter={monedaCorta} fill="#120d0a" fontSize={10} /> : null}
+          <LabelList dataKey="label_pendiente" position="top" formatter={monedaCorta} fill="#e0d1be" fontSize={11} fontWeight={700} />
+        </Bar>
+        <Bar dataKey="abiertas" name="Abiertas" stackId="ventas" fill={coloresEstado.abiertas}>
+          {mostrarLabels ? <LabelList dataKey="abiertas" formatter={monedaCorta} fill="#120d0a" fontSize={10} /> : null}
+          <LabelList dataKey="label_abiertas" position="top" formatter={monedaCorta} fill="#e0d1be" fontSize={11} fontWeight={700} />
+        </Bar>
       </BarChart>
     </ResponsiveContainer>
   );
@@ -594,6 +827,7 @@ function GraficaEstadoDia({ datos }: { datos: Record<string, string | number>[] 
 function GraficaAnulados({ datos }: { datos: AnuladoDia[] }) {
   if (datos.length === 0) return <Vacio texto="Sin anulados en el rango." />;
   const normalizados = datos.map((fila) => ({ ...fila, etiqueta: fechaCorta(fila.dia_negocio) }));
+  const mostrarLabels = conEspacioParaEtiquetas(normalizados.length, 2);
   return (
     <ResponsiveContainer width="100%" height="100%">
       <LineChart data={normalizados} margin={{ top: 12, right: 18, left: 0, bottom: 0 }}>
@@ -603,8 +837,12 @@ function GraficaAnulados({ datos }: { datos: AnuladoDia[] }) {
         <YAxis yAxisId="cantidad" orientation="right" allowDecimals={false} tick={{ fill: "#bda88f", fontSize: 11 }} tickLine={false} axisLine={false} width={32} />
         <Tooltip content={<TooltipMixto />} />
         <Legend wrapperStyle={{ color: "#e0d1be", fontSize: 12 }} />
-        <Line yAxisId="monto" type="monotone" dataKey="monto_anulado" name="Monto" stroke="#ff8b8b" strokeWidth={2} dot={{ r: 3 }} />
-        <Line yAxisId="cantidad" type="monotone" dataKey="pedidos_anulados" name="Pedidos" stroke="#f4d35e" strokeWidth={2} dot={{ r: 3 }} />
+        <Line yAxisId="monto" type="monotone" dataKey="monto_anulado" name="Monto" stroke="#ff8b8b" strokeWidth={2} dot={{ r: 3 }}>
+          {mostrarLabels ? <LabelList dataKey="monto_anulado" position="top" formatter={monedaCorta} fill="#ff8b8b" fontSize={10} /> : null}
+        </Line>
+        <Line yAxisId="cantidad" type="monotone" dataKey="pedidos_anulados" name="Pedidos" stroke="#f4d35e" strokeWidth={2} dot={{ r: 3 }}>
+          {mostrarLabels ? <LabelList dataKey="pedidos_anulados" position="top" formatter={numeroCorto} fill="#f4d35e" fontSize={10} /> : null}
+        </Line>
         <Line yAxisId="cantidad" type="monotone" dataKey="cuentas_anuladas" name="Cuentas" stroke="#7db7ff" strokeWidth={2} dot={{ r: 3 }} />
       </LineChart>
     </ResponsiveContainer>
@@ -616,15 +854,21 @@ function GraficaDesglose({ datos }: { datos: PuntoDesglose[] }) {
   const normalizados = datos.map((fila) => ({ ...fila, etiquetaCorta: fechaCorta(fila.etiqueta) }));
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <BarChart data={normalizados} margin={{ top: 12, right: 16, left: 0, bottom: 0 }}>
+      <BarChart data={normalizados} margin={{ top: 28, right: 16, left: 0, bottom: 0 }}>
         <CartesianGrid stroke="rgba(224,209,190,0.12)" vertical={false} />
         <XAxis dataKey="etiquetaCorta" tick={{ fill: "#bda88f", fontSize: 11 }} tickLine={false} axisLine={false} />
         <YAxis tickFormatter={(value) => `$${Math.round(Number(value) / 1000)}k`} tick={{ fill: "#bda88f", fontSize: 11 }} tickLine={false} axisLine={false} width={58} />
         <Tooltip content={<TooltipMoneda />} />
         <Legend wrapperStyle={{ color: "#e0d1be", fontSize: 12 }} />
-        <Bar dataKey="ventas" name="Ventas" fill="#e2b07f" radius={[3, 3, 0, 0]} />
-        <Bar dataKey="costo" name="Costo" fill="#ff8b8b" radius={[3, 3, 0, 0]} />
-        <Bar dataKey="margen" name="Ganancia" fill="#58d68d" radius={[3, 3, 0, 0]} />
+        <Bar dataKey="ventas" name="Ventas" fill="#e2b07f" radius={[3, 3, 0, 0]}>
+          <LabelList dataKey="ventas" position="top" formatter={monedaCorta} fill="#e0d1be" fontSize={10} />
+        </Bar>
+        <Bar dataKey="costo" name="Costo" fill="#ff8b8b" radius={[3, 3, 0, 0]}>
+          <LabelList dataKey="costo" position="top" formatter={monedaCorta} fill="#e0d1be" fontSize={10} />
+        </Bar>
+        <Bar dataKey="margen" name="Ganancia" fill="#58d68d" radius={[3, 3, 0, 0]}>
+          <LabelList dataKey="margen" position="top" formatter={monedaCorta} fill="#e0d1be" fontSize={10} />
+        </Bar>
       </BarChart>
     </ResponsiveContainer>
   );
@@ -648,6 +892,7 @@ function TooltipProductoEstrella({ active, payload }: any) {
 
 function GraficaMatrizEstrella({ datos, promedioUnidades, promedioGanancia }: { datos: ProductoEstrella[]; promedioUnidades: number; promedioGanancia: number }) {
   if (datos.length === 0) return <Vacio texto="Sin productos vendidos en el rango." />;
+  const mostrarLabels = datos.length <= 12;
   return (
     <ResponsiveContainer width="100%" height="100%">
       <ScatterChart margin={{ top: 14, right: 18, left: 0, bottom: 10 }}>
@@ -677,6 +922,7 @@ function GraficaMatrizEstrella({ datos, promedioUnidades, promedioGanancia }: { 
         <ReferenceLine y={promedioGanancia} stroke="rgba(224,209,190,0.35)" strokeDasharray="4 4" />
         <Scatter data={datos} name="Productos">
           {datos.map((punto) => <Cell key={`${punto.item_nombre}-${punto.categoria}`} fill={coloresCuadrante[punto.cuadrante] ?? "#bda88f"} />)}
+          {mostrarLabels ? <LabelList dataKey="score_estrella" formatter={(value: unknown) => `${numero(value).toFixed(0)}%`} fill="#e0d1be" fontSize={10} /> : null}
         </Scatter>
       </ScatterChart>
     </ResponsiveContainer>
@@ -697,7 +943,9 @@ function GraficaTopProductos({ datos, campo, nombre, color, moneda = false }: { 
         <XAxis type="number" tickFormatter={(value) => moneda ? `$${Math.round(Number(value) / 1000)}k` : Number(value).toLocaleString("es-CO")} tick={{ fill: "#bda88f", fontSize: 11 }} tickLine={false} axisLine={false} />
         <YAxis type="category" dataKey="etiqueta" tick={{ fill: "#bda88f", fontSize: 11 }} tickLine={false} axisLine={false} width={128} />
         <Tooltip content={<TooltipTopProducto nombre={nombre} moneda={moneda} />} />
-        <Bar dataKey="valor" name={nombre} fill={color} radius={[0, 4, 4, 0]} />
+        <Bar dataKey="valor" name={nombre} fill={color} radius={[0, 4, 4, 0]}>
+          <LabelList dataKey="valor" position="right" formatter={moneda ? monedaCorta : numeroCorto} fill="#e0d1be" fontSize={10} />
+        </Bar>
       </BarChart>
     </ResponsiveContainer>
   );

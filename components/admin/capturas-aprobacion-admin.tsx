@@ -24,7 +24,7 @@ type LineaRevision = {
   id: string; captura_id: string; grupo_id: string | null; orden: number; texto_original: string | null; item_nombre_detectado: string | null;
   tipo_item: TipoItem; producto_id: string | null; combo_id: string | null; cantidad: number; valor_unitario: number; subtotal: number;
   precio_catalogo: number; subtotal_esperado: number; confianza_ia: number; puntaje_match: number; requiere_revision: boolean;
-  productos?: { nombre?: string; precio_venta?: number } | null; combos?: { nombre?: string; precio_venta?: number } | null;
+  productos?: { nombre?: string; precio_venta?: number; presentacion_compra?: string | null } | null; combos?: { nombre?: string; precio_venta?: number } | null;
 };
 type PagoRevision = {
   id: string; captura_id: string; grupo_id: string | null; orden: number; medio_detectado: string | null;
@@ -54,7 +54,13 @@ function formatoFecha(fecha?: string | null) { return fecha ? new Date(`${fecha}
 function fechaInputHoy() { return new Date().toISOString().slice(0, 10); }
 function fechaHoraCorta(fecha?: string | null) { return fecha ? new Date(fecha).toLocaleString("es-CO", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "-"; }
 function valorItem(linea: LineaRevision) { return linea.tipo_item === "producto" && linea.producto_id ? `producto:${linea.producto_id}` : linea.tipo_item === "combo" && linea.combo_id ? `combo:${linea.combo_id}` : ""; }
-function nombreDetectado(linea: LineaRevision) { return linea.productos?.nombre ?? linea.combos?.nombre ?? linea.item_nombre_detectado ?? "Sin match"; }
+function nombreDetectado(linea: LineaRevision) {
+  if (linea.productos?.nombre) {
+    const presentacion = linea.productos.presentacion_compra?.trim();
+    return presentacion ? `${linea.productos.nombre} - ${presentacion}` : linea.productos.nombre;
+  }
+  return linea.combos?.nombre ?? linea.item_nombre_detectado ?? "Sin match";
+}
 function estadoCapturaTexto(estado: string) {
   if (estado === "pendiente_aprobacion") return "Pendiente admin";
   if (estado === "aprobada_parcial") return "Aprobada parcial";
@@ -553,7 +559,7 @@ function GrupoAdminCard({ capturaId, grupo, catalogo, ocupado, actualizarGrupo, 
 async function recargarResultado(supabase: ReturnType<typeof supabaseBrowser>, capturaId: string) {
   const [{ data: grupos, error: gruposError }, { data: lineas, error: lineasError }, { data: pagos, error: pagosError }] = await Promise.all([
     supabase.from("captura_venta_grupos").select("*").eq("captura_id", capturaId).order("orden"),
-    supabase.from("captura_venta_lineas").select("*, productos(nombre,precio_venta), combos(nombre,precio_venta)").eq("captura_id", capturaId).order("orden"),
+    supabase.from("captura_venta_lineas").select("*, productos(nombre,precio_venta,presentacion_compra), combos(nombre,precio_venta)").eq("captura_id", capturaId).order("orden"),
     supabase.from("captura_venta_pagos").select("*").eq("captura_id", capturaId).order("orden"),
   ]);
   if (gruposError) throw new Error(gruposError.message);

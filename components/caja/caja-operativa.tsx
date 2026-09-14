@@ -207,6 +207,43 @@ function itemsPedido(pedido: PedidoHistorial) {
   return Array.isArray(pedido.pedido_items) ? pedido.pedido_items.filter((item: any) => item.estado !== "anulado") : [];
 }
 
+function etiquetaProductoPedido(producto: any) {
+  const nombre = producto?.nombre ?? "Producto";
+  const presentacion = String(producto?.presentacion_compra ?? "").trim();
+  return presentacion ? `${nombre} - ${presentacion}` : nombre;
+}
+
+function nombreItemPedido(item: any) {
+  if (item.productos) return etiquetaProductoPedido(item.productos);
+  return item.combos?.nombre ?? "Item";
+}
+
+function componentesComboTexto(item: any) {
+  const componentes = Array.isArray(item.combos?.combo_items) ? item.combos.combo_items : [];
+  return componentes
+    .filter((componente: any) => componente.activo !== false)
+    .map((componente: any) => `${componente.cantidad} x ${etiquetaProductoPedido(componente.productos)}`)
+    .join(", ");
+}
+
+function resumenItemsCuenta(cuenta: Cuenta) {
+  const items = new Map<string, { nombre: string; cantidad: number; total: number }>();
+
+  pedidosCuenta(cuenta).forEach((pedido: PedidoHistorial) => {
+    itemsPedido(pedido).forEach((item: any) => {
+      const nombre = nombreItemPedido(item);
+      const cantidad = Number(item.cantidad ?? 0);
+      const total = cantidad * Number(item.precio_unitario_capturado ?? 0);
+      const actual = items.get(nombre) ?? { nombre, cantidad: 0, total: 0 };
+      actual.cantidad += cantidad;
+      actual.total += total;
+      items.set(nombre, actual);
+    });
+  });
+
+  return [...items.values()].sort((a, b) => b.total - a.total);
+}
+
 function fechaPrincipalCuenta(cuenta: Cuenta) {
   const pedidos = pedidosCuenta(cuenta);
   const fechaPedidoReciente = pedidos
@@ -253,6 +290,7 @@ export function CajaOperativa() {
   const [mensajesCantidad, setMensajesCantidad] = useState<Record<string, { tipo: "ok" | "error"; texto: string }>>({});
   const [requiereAperturaCaja, setRequiereAperturaCaja] = useState(false);
   const [filtroFechaCobros, setFiltroFechaCobros] = useState<FiltroFechaCobros>("hoy");
+  const [cuentasExpandidas, setCuentasExpandidas] = useState<Record<string, boolean>>({});
   const [accionAnulacion, setAccionAnulacion] = useState<AccionAnulacionCaja | null>(null);
 
   const manejarResumenCaja = useCallback((resumenCaja: { requiere_apertura?: boolean }) => {
@@ -265,7 +303,7 @@ export function CajaOperativa() {
       supabase.rpc("cuentas_activas_caja"),
       supabase
         .from("pedidos")
-        .select("id,estado,enviado_at,notas,mesero:perfiles!pedidos_mesero_id_fkey(nombre),cuentas(id,estado,total_cuenta,responsable_pendiente,nickname,mesas(nombre,zona)),pedido_items(id,cantidad,estado,precio_unitario_capturado,productos(nombre),combos(nombre))")
+        .select("id,estado,enviado_at,notas,mesero:perfiles!pedidos_mesero_id_fkey(nombre),cuentas(id,estado,total_cuenta,responsable_pendiente,nickname,mesas(nombre,zona)),pedido_items(id,cantidad,estado,precio_unitario_capturado,productos(nombre,presentacion_compra),combos(nombre,combo_items(cantidad,activo,productos(nombre,presentacion_compra))))")
         .neq("estado", "anulado")
         .order("enviado_at", { ascending: false })
         .limit(80),
@@ -674,6 +712,8 @@ export function CajaOperativa() {
             const bloqueada = procesando === cuenta.id;
             const fechaCuenta = fechaPrincipalCuenta(cuenta);
             const cuentaVacia = total <= 0 && pedidos.every((pedido: PedidoHistorial) => itemsPedido(pedido).length === 0);
+            const cuentaExpandida = Boolean(cuentasExpandidas[cuenta.id]);
+            const resumenItems = resumenItemsCuenta(cuenta);
 
             return (
               <article key={cuenta.id} className="rounded-lg border border-antiguo/15 bg-espresso p-3 shadow-suave sm:p-4">
@@ -693,6 +733,37 @@ export function CajaOperativa() {
                   </div>
                 </div>
 
+                <div className="mt-3 rounded-md border border-antiguo/10 bg-carbon p-3">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold uppercase tracking-wide text-antiguo/55">Resumen de cuenta</p>
+                      <p className="mt-1 text-sm font-bold text-crema">{pedidos.length} pedido(s) / {resumenItems.reduce((sum, item) => sum + item.cantidad, 0)} item(s)</p>
+                      {resumenItems.length > 0 ? (
+                        <ul className="mt-2 space-y-1 text-xs text-antiguo/75">
+                          {resumenItems.slice(0, 3).map((item) => (
+                            <li key={item.nombre} className="flex flex-wrap justify-between gap-x-3 gap-y-1">
+                              <span className="min-w-0 truncate">{item.cantidad} x {item.nombre}</span>
+                              <span className="font-bold text-dorado">{formatoCOP(item.total)}</span>
+                            </li>
+                          ))}
+                          {resumenItems.length > 3 ? <li className="text-antiguo/55">+ {resumenItems.length - 3} item(s) más</li> : null}
+                        </ul>
+                      ) : (
+                        <p className="mt-2 text-xs text-antiguo/60">Sin items activos.</p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setCuentasExpandidas((actual) => ({ ...actual, [cuenta.id]: !cuentaExpandida }))}
+                      className="tap-target rounded-md border border-oro/30 bg-espresso px-4 text-sm font-black text-dorado"
+                    >
+                      {cuentaExpandida ? "Ocultar pedido" : "Ver cuenta completa"}
+                    </button>
+                  </div>
+                </div>
+
+                {cuentaExpandida ? (
+                <>
                 <div className="mt-4 space-y-4">
                   {pedidos.map((pedido: any) => (
                     <section key={pedido.id} className="rounded-md border border-antiguo/10 bg-carbon p-3">
@@ -719,7 +790,8 @@ export function CajaOperativa() {
                           return (
                           <li key={item.id} className="grid gap-2 border-t border-antiguo/10 pt-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
                             <div className="min-w-0">
-                              <p className="font-bold text-crema">{item.cantidad} x {item.productos?.nombre ?? item.combos?.nombre}</p>
+                              <p className="font-bold text-crema">{item.cantidad} x {nombreItemPedido(item)}</p>
+                              {componentesComboTexto(item) ? <p className="text-xs text-antiguo/55">{componentesComboTexto(item)}</p> : null}
                               <p className="text-xs text-antiguo/60">{formatoCOP(Number(item.cantidad) * Number(item.precio_unitario_capturado))}</p>
                             </div>
                             <div className="grid grid-cols-[34px_54px_34px_auto] items-center gap-1">
@@ -826,7 +898,7 @@ export function CajaOperativa() {
 
                   <div className="mt-3 rounded-md border border-antiguo/10 bg-espresso p-3">
                     <p className="text-xs font-bold uppercase tracking-wide text-oro">Datos DIAN-ready</p>
-                    <p className="mt-1 text-xs text-antiguo/60">Si la venta supera 5 UVT, la base exige nombre/razon social y documento. El comprobante es interno, no fiscal.</p>
+                    <p className="mt-1 text-xs text-antiguo/60">Datos opcionales para control interno. El comprobante interno no es fiscal y estos campos ya no bloquean el registro del pago.</p>
                     <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_110px_150px]">
                       <input value={adquirientes[cuenta.id]?.razon_social ?? ""} onChange={(event) => setAdquirientes((actual) => ({ ...actual, [cuenta.id]: { ...(actual[cuenta.id] ?? { tipo_id: "CC", numero_id: "", correo: "", telefono: "" }), razon_social: event.target.value } }))} placeholder="Nombre o razon social" className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema placeholder:text-antiguo/50" />
                       <select value={adquirientes[cuenta.id]?.tipo_id ?? "CC"} onChange={(event) => setAdquirientes((actual) => ({ ...actual, [cuenta.id]: { ...(actual[cuenta.id] ?? { razon_social: "", numero_id: "", correo: "", telefono: "" }), tipo_id: event.target.value } }))} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
@@ -856,6 +928,8 @@ export function CajaOperativa() {
                   ) : null}
                 </section>
                 )}
+                </>
+                ) : null}
               </article>
             );
           })}
@@ -891,7 +965,10 @@ export function CajaOperativa() {
                 <ul className="mt-3 space-y-2 text-sm">
                   {itemsPedido(pedido).map((item: any) => (
                     <li key={item.id} className="flex flex-wrap justify-between gap-x-3 gap-y-1 border-t border-antiguo/10 pt-2">
-                      <span>{item.cantidad} x {item.productos?.nombre ?? item.combos?.nombre}</span>
+                      <span>
+                        {item.cantidad} x {nombreItemPedido(item)}
+                        {componentesComboTexto(item) ? <span className="block text-xs text-antiguo/55">{componentesComboTexto(item)}</span> : null}
+                      </span>
                       <span className="font-bold text-dorado">{formatoCOP(Number(item.cantidad) * Number(item.precio_unitario_capturado))}</span>
                     </li>
                   ))}

@@ -50,7 +50,7 @@ type LineaRevision = {
   confianza_ia: number;
   puntaje_match: number;
   requiere_revision: boolean;
-  productos?: { nombre?: string; precio_venta?: number } | null;
+  productos?: { nombre?: string; precio_venta?: number; presentacion_compra?: string | null } | null;
   combos?: { nombre?: string; precio_venta?: number } | null;
 };
 
@@ -136,7 +136,11 @@ function valorItem(linea: LineaRevision) {
 }
 
 function nombreDetectado(linea: LineaRevision) {
-  return linea.productos?.nombre ?? linea.combos?.nombre ?? linea.item_nombre_detectado ?? "Sin match";
+  if (linea.productos?.nombre) {
+    const presentacion = linea.productos.presentacion_compra?.trim();
+    return presentacion ? `${linea.productos.nombre} - ${presentacion}` : linea.productos.nombre;
+  }
+  return linea.combos?.nombre ?? linea.item_nombre_detectado ?? "Sin match";
 }
 
 function nombreMedio(medio: MedioPago | null) {
@@ -310,7 +314,7 @@ export function CapturasVentaPanel({ colapsable = false, defaultExpandido = true
       const [{ data: grupos, error: gruposError }, { data: lineas, error: lineasError }, { data: pagos, error: pagosError }] = ids.length > 0
         ? await Promise.all([
             supabase.from("captura_venta_grupos").select("*").in("captura_id", ids).order("orden"),
-            supabase.from("captura_venta_lineas").select("*, productos(nombre,precio_venta), combos(nombre,precio_venta)").in("captura_id", ids).order("orden"),
+            supabase.from("captura_venta_lineas").select("*, productos(nombre,precio_venta,presentacion_compra), combos(nombre,precio_venta)").in("captura_id", ids).order("orden"),
             supabase.from("captura_venta_pagos").select("*").in("captura_id", ids).order("orden"),
           ])
         : [{ data: [], error: null }, { data: [], error: null }, { data: [], error: null }];
@@ -1103,7 +1107,7 @@ export function CapturasVentaPanel({ colapsable = false, defaultExpandido = true
 async function recargarResultado(supabase: ReturnType<typeof supabaseBrowser>, capturaId: string) {
   const [{ data: grupos, error: gruposError }, { data: lineas, error: lineasError }, { data: pagos, error: pagosError }] = await Promise.all([
     supabase.from("captura_venta_grupos").select("*").eq("captura_id", capturaId).order("orden"),
-    supabase.from("captura_venta_lineas").select("*, productos(nombre,precio_venta), combos(nombre,precio_venta)").eq("captura_id", capturaId).order("orden"),
+    supabase.from("captura_venta_lineas").select("*, productos(nombre,precio_venta,presentacion_compra), combos(nombre,precio_venta)").eq("captura_id", capturaId).order("orden"),
     supabase.from("captura_venta_pagos").select("*").eq("captura_id", capturaId).order("orden"),
   ]);
 
