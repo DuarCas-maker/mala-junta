@@ -12,7 +12,8 @@
                     "supabase:reset":  "supabase db reset",
                     "test:sql:f0":  "supabase test db --local tests/rls/f0.sql",
                     "test:sql:f6":  "supabase test db --local tests/rls/f6_compras_ocr.sql",
-                    "test:sql:f7":  "supabase test db --local tests/rls/f7_inventario_negativo.sql"
+                    "test:sql:f7":  "supabase test db --local tests/rls/f7_inventario_negativo.sql",
+                    "test:sql:f8":  "supabase test db --local tests/rls/f8_reconciliar_cuenta_pagada.sql"
                 },
     "dependencies":  {
                          "@supabase/supabase-js":  "^2.45.4",

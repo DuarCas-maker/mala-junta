@@ -470,6 +470,33 @@ export function CajaOperativa() {
     }
   }
 
+  async function cerrarCuentaPagada(cuentaId: string) {
+    setMensaje(null);
+    setProcesando(cuentaId);
+
+    try {
+      const supabase = supabaseBrowser();
+      const { data, error: rpcError } = await supabase.rpc("cerrar_cuenta_pagada", { p_cuenta_id: cuentaId });
+      if (rpcError) throw new Error(rpcError.message);
+
+      const excedente = Number(data?.excedente ?? 0);
+      setMensaje(excedente > 0
+        ? `Cuenta marcada como pagada y mesa liberada. Revisa la diferencia registrada de ${formatoCOP(excedente)}.`
+        : "Cuenta marcada como pagada y mesa liberada.");
+      await cargar();
+    } catch (err) {
+      const errorTexto = err instanceof Error ? err.message : "No se pudo cerrar la cuenta pagada.";
+      const mensajesError: Record<string, string> = {
+        saldo_pendiente: "La cuenta todavia tiene saldo pendiente. Actualiza la vista y revisa los pagos.",
+        cuenta_sin_total: "Esta cuenta no tiene total activo. Usa la opcion Liberar mesa.",
+        cuenta_no_editable: "La cuenta ya no se puede modificar.",
+      };
+      setMensaje(mensajesError[errorTexto] ?? errorTexto);
+    } finally {
+      setProcesando(null);
+    }
+  }
+
   function valorCantidadEditada(item: any) {
     return cantidadesEditadas[item.id] ?? String(item.cantidad ?? 0);
   }
@@ -541,7 +568,10 @@ export function CajaOperativa() {
     const medio = mediosSeleccionados[cuentaId] ?? "efectivo";
     const dejaPendiente = Boolean(pendiente[cuentaId]);
     const responsable = responsables[cuentaId]?.trim() ?? "";
-    const pagos = monto > 0 ? [{ medio, monto }] : [];
+    const saldoActual = Math.max(Number(cuenta.total_cuenta ?? 0) - totalPagado(cuenta), 0);
+    const cambioEfectivo = !dejaPendiente && medio === "efectivo" ? Math.max(monto - saldoActual, 0) : 0;
+    const montoAplicado = cambioEfectivo > 0 ? saldoActual : monto;
+    const pagos = montoAplicado > 0 ? [{ medio, monto: montoAplicado }] : [];
     const adquiriente = adquirientes[cuentaId];
     const adquirientePayload = adquiriente && (adquiriente.razon_social || adquiriente.numero_id || adquiriente.correo || adquiriente.telefono)
       ? {
@@ -555,6 +585,11 @@ export function CajaOperativa() {
     const envioPayload = envioDestinos[cuentaId]
       ? { canal: envioCanales[cuentaId] ?? "correo", destino: envioDestinos[cuentaId] }
       : null;
+
+    if (!dejaPendiente && medio !== "efectivo" && monto > saldoActual) {
+      setMensaje(`El pago supera el saldo de ${formatoCOP(saldoActual)}. Corrige el valor antes de registrarlo.`);
+      return;
+    }
 
     if (pagos.length === 0 && !dejaPendiente) {
       setMensaje("Ingresa un valor de pago o marca la cuenta como pendiente.");
@@ -599,7 +634,8 @@ export function CajaOperativa() {
 
     if (rpcError) setMensaje(rpcError.message === "caja_no_abierta" ? "Debes abrir caja antes de registrar pagos." : rpcError.message);
     else {
-      setMensaje(pagoData?.documento ? `Pago registrado. Documento ${pagoData.documento.numero} generado como comprobante interno no fiscal.` : "Pago registrado. Si cubrio el saldo, la cuenta sale de esta vista y queda en public.pagos.");
+      const confirmacionBase = pagoData?.documento ? `Pago registrado. Documento ${pagoData.documento.numero} generado como comprobante interno no fiscal.` : "Pago registrado. Si cubrio el saldo, la cuenta sale de esta vista y queda en public.pagos.";
+      setMensaje(cambioEfectivo > 0 ? `${confirmacionBase} Cambio: ${formatoCOP(cambioEfectivo)}.` : confirmacionBase);
       limpiarPago(cuentaId);
     }
     setProcesando(null);
@@ -712,8 +748,14 @@ export function CajaOperativa() {
             const bloqueada = procesando === cuenta.id;
             const fechaCuenta = fechaPrincipalCuenta(cuenta);
             const cuentaVacia = total <= 0 && pedidos.every((pedido: PedidoHistorial) => itemsPedido(pedido).length === 0);
+            const cuentaPagadaSinCerrar = total > 0 && pagado >= total && !["pagada", "cerrada", "anulada"].includes(cuenta.estado);
             const cuentaExpandida = Boolean(cuentasExpandidas[cuenta.id]);
             const resumenItems = resumenItemsCuenta(cuenta);
+            const montoIngresado = Number(montosPago[cuenta.id] ?? 0);
+            const medioPagoSeleccionado = mediosSeleccionados[cuenta.id] ?? "efectivo";
+            const dejaPendiente = Boolean(pendiente[cuenta.id]);
+            const cambioEfectivo = !dejaPendiente && medioPagoSeleccionado === "efectivo" ? Math.max(montoIngresado - saldo, 0) : 0;
+            const pagoNoEfectivoExcedeSaldo = !dejaPendiente && medioPagoSeleccionado !== "efectivo" && montoIngresado > saldo;
 
             return (
               <article key={cuenta.id} className="rounded-lg border border-antiguo/15 bg-espresso p-3 shadow-suave sm:p-4">
@@ -761,6 +803,15 @@ export function CajaOperativa() {
                     </button>
                   </div>
                 </div>
+
+                {cuentaPagadaSinCerrar ? (
+                  <section className="mt-3 rounded-md border border-dorado/30 bg-carbon p-3">
+                    <p className="text-sm font-bold text-dorado">Cuenta totalmente cubierta</p>
+                    <p className="mt-1 text-xs text-antiguo/70">Los pagos registrados cubren el total. Cierra la cuenta para liberar la mesa sin modificar pedidos ni inventario.</p>
+                    {pagado > total ? <p className="mt-1 text-xs font-bold text-dorado">Diferencia registrada: {formatoCOP(pagado - total)}</p> : null}
+                    <button type="button" disabled={bloqueada} onClick={() => cerrarCuentaPagada(cuenta.id)} className="tap-target mt-3 w-full rounded-md bg-oro px-3 text-sm font-black text-carbon disabled:opacity-50">{bloqueada ? "Cerrando..." : "Cerrar cuenta y liberar mesa"}</button>
+                  </section>
+                ) : null}
 
                 {cuentaExpandida ? (
                 <>
@@ -856,7 +907,7 @@ export function CajaOperativa() {
                   </section>
                 ) : null}
 
-                {cuentaVacia ? (
+                {cuentaPagadaSinCerrar ? null : cuentaVacia ? (
                   <section className="mt-4 rounded-md border border-dorado/30 bg-carbon p-3">
                     <p className="text-sm font-bold text-dorado">Mesa sin items activos</p>
                     <p className="mt-1 text-xs text-antiguo/65">Libera esta cuenta para que la mesa vuelva a quedar disponible en pedidos.</p>
@@ -921,8 +972,10 @@ export function CajaOperativa() {
 
                   <div className="mt-3 grid grid-cols-2 gap-2">
                     <button type="button" onClick={() => setMontosPago((actual) => ({ ...actual, [cuenta.id]: String(saldo) }))} className="tap-target rounded-md border border-antiguo/20 px-3 text-sm font-bold">Valor exacto</button>
-                    <button type="button" disabled={bloqueada || requiereAperturaCaja} onClick={() => registrarPago(cuenta)} className="tap-target rounded-md bg-oro px-3 text-sm font-black text-carbon disabled:opacity-50">{requiereAperturaCaja ? "Abre caja primero" : "Registrar pago"}</button>
+                    <button type="button" disabled={bloqueada || requiereAperturaCaja || pagoNoEfectivoExcedeSaldo} onClick={() => registrarPago(cuenta)} className="tap-target rounded-md bg-oro px-3 text-sm font-black text-carbon disabled:opacity-50">{requiereAperturaCaja ? "Abre caja primero" : "Registrar pago"}</button>
                   </div>
+                  {cambioEfectivo > 0 ? <p className="mt-2 rounded-md border border-dorado/30 bg-oro/10 p-2 text-sm font-bold text-dorado">Se aplican {formatoCOP(saldo)} a la cuenta. Cambio: {formatoCOP(cambioEfectivo)}.</p> : null}
+                  {pagoNoEfectivoExcedeSaldo ? <p className="mt-2 text-xs font-bold text-red-200">El pago no puede superar el saldo de {formatoCOP(saldo)}.</p> : null}
                   {cuenta.estado === "pendiente" ? (
                     <button type="button" disabled={bloqueada} onClick={() => quitarPendiente(cuenta.id)} className="tap-target mt-2 w-full rounded-md border border-antiguo/20 px-3 text-sm font-bold text-crema disabled:opacity-50">Quitar pendiente</button>
                   ) : null}
