@@ -2,6 +2,8 @@
 
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { AvisoFlotante, type TipoAviso } from "@/components/ui/aviso-flotante";
+import { SelectorBuscable, type OpcionSelectorBuscable } from "@/components/ui/selector-buscable";
 import { formatoCOP } from "@/lib/format";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 
@@ -10,7 +12,7 @@ type TipoItem = "producto" | "combo" | "desconocido";
 type TipoDiferencia = "positiva" | "negativa" | "cero";
 type FiltroEstado = "pendientes" | "todas" | "confirmadas" | "eliminadas";
 
-type ItemCatalogo = { clave: string; id: string; tipo: "producto" | "combo"; nombre: string; precio_venta: number };
+type ItemCatalogo = { clave: string; id: string; tipo: "producto" | "combo"; nombre: string; precio_venta: number; busqueda?: string };
 type CapturaResumen = {
   id: string; estado: string; fecha_venta: string | null; dia_negocio: string | null; created_at: string;
   enviado_aprobacion_at: string | null; aprobado_at: string | null; confirmado_at: string | null; eliminado_at: string | null;
@@ -136,6 +138,13 @@ function capturaFiltrada(captura: CapturaResumen, filtro: FiltroEstado) {
   return true;
 }
 
+function tipoAvisoAprobacion(mensaje: string | null): TipoAviso {
+  if (!mensaje) return "info";
+  const texto = mensaje.toLowerCase();
+  if (texto.includes("aprobada") || texto.includes("aprobado") || texto.includes("guardada") || texto.includes("agregada") || texto.includes("eliminada") || texto.includes("listas")) return "exito";
+  return "error";
+}
+
 export function CapturasAprobacionAdminPanel() {
   const [capturas, setCapturas] = useState<CapturaResumen[]>([]);
   const [catalogo, setCatalogo] = useState<ItemCatalogo[]>([]);
@@ -165,14 +174,14 @@ export function CapturasAprobacionAdminPanel() {
   const cargarCatalogo = useCallback(async () => {
     const supabase = supabaseBrowser();
     const [{ data: productos, error: productosError }, { data: combos, error: combosError }] = await Promise.all([
-      supabase.from("v_productos_operativos").select("id,nombre,precio_venta,presentacion_compra").order("nombre"),
+      supabase.from("v_productos_operativos").select("id,nombre,precio_venta,presentacion_compra,codigo_interno,categoria").order("nombre"),
       supabase.from("combos").select("id,nombre,precio_venta").eq("activo", true).order("nombre"),
     ]);
     if (productosError) throw new Error(productosError.message);
     if (combosError) throw new Error(combosError.message);
     setCatalogo([
-      ...((productos ?? []) as any[]).map((producto) => ({ clave: `producto:${producto.id}`, id: producto.id, tipo: "producto" as const, nombre: `${producto.nombre}${producto.presentacion_compra ? ` - ${producto.presentacion_compra}` : ""}`, precio_venta: Number(producto.precio_venta ?? 0) })),
-      ...((combos ?? []) as any[]).map((combo) => ({ clave: `combo:${combo.id}`, id: combo.id, tipo: "combo" as const, nombre: combo.nombre, precio_venta: Number(combo.precio_venta ?? 0) })),
+      ...((productos ?? []) as any[]).map((producto) => ({ clave: `producto:${producto.id}`, id: producto.id, tipo: "producto" as const, nombre: `${producto.nombre}${producto.presentacion_compra ? ` - ${producto.presentacion_compra}` : ""}`, precio_venta: Number(producto.precio_venta ?? 0), busqueda: `${producto.codigo_interno ?? ""} ${producto.categoria ?? ""}` })),
+      ...((combos ?? []) as any[]).map((combo) => ({ clave: `combo:${combo.id}`, id: combo.id, tipo: "combo" as const, nombre: combo.nombre, precio_venta: Number(combo.precio_venta ?? 0), busqueda: "combo" })),
     ]);
   }, []);
 
@@ -414,6 +423,7 @@ export function CapturasAprobacionAdminPanel() {
 
   return (
     <section className="space-y-4">
+      <AvisoFlotante mensaje={mensaje} tipo={tipoAvisoAprobacion(mensaje)} onCerrar={() => setMensaje(null)} />
       <div className="grid gap-3 sm:grid-cols-3">
         <ResumenCard titulo="Pendientes" valor={resumen.pendientes} />
         <ResumenCard titulo="Confirmadas" valor={resumen.confirmadas} />
@@ -433,8 +443,6 @@ export function CapturasAprobacionAdminPanel() {
             <button type="button" onClick={() => void cargarInicial()} className="tap-target rounded-md border border-antiguo/20 px-3 text-sm font-bold text-crema">Actualizar</button>
           </div>
         </div>
-        {mensaje ? <p className="mt-3 rounded-md border border-antiguo/15 bg-carbon p-3 text-sm font-semibold text-champana">{mensaje}</p> : null}
-
         <div className="mt-4 space-y-3">
           {cargando ? <p className="rounded-md border border-antiguo/10 bg-carbon p-4 text-center text-sm text-antiguo/70">Cargando solicitudes...</p> : null}
           {!cargando && capturasVisibles.length === 0 ? <p className="rounded-md border border-antiguo/10 bg-carbon p-4 text-center text-sm text-antiguo/70">No hay capturas para este filtro.</p> : null}
@@ -507,6 +515,11 @@ type GrupoAdminCardProps = {
 function GrupoAdminCard({ capturaId, grupo, catalogo, ocupado, actualizarGrupo, actualizarLinea, actualizarPago, seleccionarItem, agregarLinea, quitarLinea, agregarPago, quitarPago, marcarLista, aprobarVenta, eliminarVenta }: GrupoAdminCardProps) {
   const editable = itemEditable(grupo) && !ocupado;
   const estado = estadoVentaTexto(grupo);
+  const opcionesCatalogo = useMemo<OpcionSelectorBuscable[]>(() => catalogo.map((item) => ({
+    value: item.clave,
+    label: `${item.tipo === "combo" ? "Combo - " : ""}${item.nombre}`,
+    busqueda: item.busqueda,
+  })), [catalogo]);
   return (
     <article className="rounded-md border-2 border-white bg-espresso p-3">
       <div className="flex flex-col gap-2 border-b border-white/25 pb-3 sm:flex-row sm:items-start sm:justify-between">
@@ -525,7 +538,14 @@ function GrupoAdminCard({ capturaId, grupo, catalogo, ocupado, actualizarGrupo, 
         {grupo.lineas.map((linea) => (
           <div key={linea.id} className="rounded-md border border-antiguo/10 bg-carbon p-3"><p className="text-xs text-antiguo/60">Leido: {linea.texto_original ?? linea.item_nombre_detectado ?? "-"}</p>
             <div className="mt-2 grid gap-2 lg:grid-cols-[1.4fr_80px_110px_110px_auto]">
-              <select value={valorItem(linea)} onChange={(event) => seleccionarItem(capturaId, grupo.id, linea, event.target.value)} disabled={!editable} className="tap-target rounded-md border border-antiguo/20 bg-espresso px-3 text-crema disabled:opacity-60"><option value="">Sin match - {nombreDetectado(linea)}</option>{catalogo.map((item) => <option key={item.clave} value={item.clave}>{item.tipo === "combo" ? "Combo - " : ""}{item.nombre}</option>)}</select>
+              <SelectorBuscable
+                value={valorItem(linea)}
+                onChange={(value) => seleccionarItem(capturaId, grupo.id, linea, value)}
+                opciones={opcionesCatalogo}
+                placeholder={`Sin match - ${nombreDetectado(linea)}`}
+                sinResultados="No hay productos o combos que coincidan"
+                disabled={!editable}
+              />
               <input type="number" min="1" inputMode="numeric" value={linea.cantidad} onChange={(event) => actualizarLinea(capturaId, grupo.id, linea.id, { cantidad: Number(event.target.value) })} disabled={!editable} className="tap-target rounded-md border border-antiguo/20 bg-espresso px-3 text-crema disabled:opacity-60" />
               <input type="number" min="0" inputMode="numeric" value={linea.precio_catalogo} onChange={(event) => actualizarLinea(capturaId, grupo.id, linea.id, { precio_catalogo: Number(event.target.value), requiere_revision: true })} disabled={!editable} className="tap-target rounded-md border border-antiguo/20 bg-espresso px-3 text-crema disabled:opacity-60" />
               <p className="rounded-md border border-antiguo/10 bg-espresso px-3 py-3 text-sm font-bold text-dorado">{formatoCOP(linea.subtotal_esperado)}</p>

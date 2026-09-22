@@ -2,6 +2,8 @@
 
 import Image from "next/image";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AvisoFlotante, type TipoAviso } from "@/components/ui/aviso-flotante";
+import { SelectorBuscable, type OpcionSelectorBuscable } from "@/components/ui/selector-buscable";
 import { formatoCOP } from "@/lib/format";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 
@@ -25,6 +27,10 @@ type ProductoCatalogo = {
   stock_minimo: number;
   presentacion_compra: string;
   factor_compra: number;
+  categoria_id?: string | null;
+  categoria?: string | null;
+  activo: boolean;
+  imagen_url: string | null;
 };
 
 type CapturaCompraResumen = {
@@ -115,6 +121,14 @@ type AprobarCompraResultado = {
 type RechazarCompraResultado = {
   lineas_rechazadas?: number;
 };
+
+function tipoAvisoCapturaCompra(mensaje: string | null): TipoAviso {
+  if (!mensaje) return "info";
+  const texto = mensaje.toLowerCase();
+  if (texto.includes("imagen pendiente")) return "advertencia";
+  if (texto.includes("guardada") || texto.includes("ingresado") || texto.includes("procesada") || texto.includes("rechazada")) return "exito";
+  return "error";
+}
 
 function fechaInputHoy() {
   const partes = new Intl.DateTimeFormat("es-CO", {
@@ -306,6 +320,12 @@ export function CapturasCompraAdminPanel() {
     entradas: entradasAuditoria.length,
     total: capturas.length,
   }), [capturas, entradasAuditoria]);
+  const categoriasPorId = useMemo(() => new Map(categorias.map((categoria) => [categoria.id, categoria.nombre])), [categorias]);
+  const opcionesProductos = useMemo<OpcionSelectorBuscable[]>(() => productos.map((producto) => ({
+    value: producto.id,
+    label: `${producto.nombre} - ${producto.presentacion_compra} x${producto.factor_compra}${producto.imagen_url ? (producto.activo ? "" : " - inactivo") : " - imagen pendiente"}`,
+    busqueda: `${producto.codigo_interno ?? ""} ${producto.categoria ?? categoriasPorId.get(producto.categoria_id ?? "") ?? ""}`,
+  })), [categoriasPorId, productos]);
 
   const cargar = useCallback(async () => {
     setCargando(true);
@@ -314,7 +334,7 @@ export function CapturasCompraAdminPanel() {
       const supabase = supabaseBrowser();
       const [{ data: proveedoresData, error: proveedoresError }, { data: productosData, error: productosError }, { data: categoriasData, error: categoriasError }, { data: capturasData, error: capturasError }, { data: entradasData, error: entradasError }] = await Promise.all([
         supabase.from("proveedores").select("id,nombre").eq("activo", true).order("nombre"),
-        supabase.from("productos").select("id,nombre,precio_venta,costo_unitario_actual,codigo_interno,stock_actual,stock_minimo,presentacion_compra,factor_compra").eq("activo", true).order("nombre"),
+        supabase.from("v_catalogo_items_stock").select("item_id,nombre,precio_venta,costo_estimado,codigo_interno,stock_disponible,stock_minimo,presentacion_compra,factor_compra,activo,imagen_url,categoria").eq("tipo_item", "producto").or("activo.eq.true,imagen_url.is.null").order("nombre"),
         supabase.from("categorias").select("id,nombre").eq("activa", true).order("nombre"),
         supabase.from("v_admin_capturas_compra_aprobacion").select("*").order("created_at", { ascending: false }).limit(50),
         supabase.from("v_admin_entradas_inventario_ocr").select("*").order("registrado_at", { ascending: false }).limit(120),
@@ -328,7 +348,20 @@ export function CapturasCompraAdminPanel() {
 
       const lista = (capturasData ?? []) as CapturaCompraResumen[];
       setProveedores((proveedoresData ?? []) as Proveedor[]);
-      setProductos((productosData ?? []) as ProductoCatalogo[]);
+      setProductos(((productosData ?? []) as any[]).map((producto) => ({
+        id: producto.item_id,
+        nombre: producto.nombre,
+        precio_venta: Number(producto.precio_venta ?? 0),
+        costo_unitario_actual: Number(producto.costo_estimado ?? 0),
+        codigo_interno: producto.codigo_interno ?? null,
+        stock_actual: Number(producto.stock_disponible ?? 0),
+        stock_minimo: Number(producto.stock_minimo ?? 0),
+        presentacion_compra: producto.presentacion_compra ?? "unidad",
+        factor_compra: Number(producto.factor_compra ?? 1),
+        categoria: producto.categoria ?? null,
+        activo: Boolean(producto.activo),
+        imagen_url: producto.imagen_url ?? null,
+      })));
       setCategorias((categoriasData ?? []) as Categoria[]);
       setCapturas(lista);
       setEntradasAuditoria((entradasData ?? []) as EntradaInventarioOcr[]);
@@ -496,7 +529,7 @@ export function CapturasCompraAdminPanel() {
         p_stock_minimo: 0,
         p_presentacion_compra: "unidad",
         p_factor_compra: 1,
-        p_activo: true,
+        p_activo: false,
       });
       if (error) throw new Error(error.message);
       const producto = data as ProductoCatalogo;
@@ -517,7 +550,7 @@ export function CapturasCompraAdminPanel() {
             : item
         )),
       }));
-      setMensaje(`Producto creado: ${producto.nombre}. Completa costo y precio en catalogo antes de aprobar.`);
+      setMensaje(`Producto creado, imagen pendiente: ${producto.nombre}. Completa costo y precio; quedará inactivo para ventas hasta cargar su imagen desde Catálogo.`);
     } catch (err) {
       setMensaje(err instanceof Error ? err.message : "No se pudo crear el producto.");
     } finally {
@@ -591,8 +624,8 @@ export function CapturasCompraAdminPanel() {
       if (error) throw new Error(error.message);
 
       setLineasEliminadas((actual) => ({ ...actual, [captura.id]: [] }));
-      if (!opciones.silencioso) setMensaje("Revision de inventario guardada.");
       await cargar();
+      if (!opciones.silencioso) setMensaje("Revision de inventario guardada.");
       return true;
     } catch (err) {
       setMensaje(err instanceof Error ? err.message : "No se pudo guardar la revision.");
@@ -625,8 +658,9 @@ export function CapturasCompraAdminPanel() {
       if (error) throw new Error(error.message);
 
       const resultado = data as AprobarCompraResultado | null;
-      setMensaje(`Inventario ingresado. Items: ${resultado?.items_confirmados ?? lineas.length}. Total: ${formatoCOP(Number(resultado?.total ?? totalActual))}.`);
+      const mensajeExito = `Inventario ingresado. Items: ${resultado?.items_confirmados ?? lineas.length}. Total: ${formatoCOP(Number(resultado?.total ?? totalActual))}.`;
       await cargar();
+      setMensaje(mensajeExito);
     } catch (err) {
       setMensaje(err instanceof Error ? err.message : "No se pudo ingresar el inventario.");
     } finally {
@@ -659,8 +693,9 @@ export function CapturasCompraAdminPanel() {
       if (error) throw new Error(error.message);
 
       const resultado = data as RechazarCompraResultado | null;
-      setMensaje(`Solicitud rechazada. Lineas cerradas: ${resultado?.lineas_rechazadas ?? 0}.`);
+      const mensajeExito = `Solicitud rechazada. Lineas cerradas: ${resultado?.lineas_rechazadas ?? 0}.`;
       await cargar();
+      setMensaje(mensajeExito);
     } catch (err) {
       setMensaje(err instanceof Error ? err.message : "No se pudo rechazar la solicitud.");
     } finally {
@@ -706,10 +741,10 @@ export function CapturasCompraAdminPanel() {
       if (!response.ok) throw new Error(data.error ?? "No se pudo procesar la factura de inventario.");
 
       const lineas = Number((data as { lineas?: unknown[] }).lineas?.length ?? 0);
-      setMensaje(`Factura de inventario procesada. Se detectaron ${lineas} item(s) para revision.`);
       setFoto(null);
       setObservacion("");
       await cargar();
+      setMensaje(`Factura de inventario procesada. Se detectaron ${lineas} item(s) para revision.`);
     } catch (err) {
       setMensaje(err instanceof Error ? err.message : "No se pudo procesar la factura de inventario.");
     } finally {
@@ -719,6 +754,7 @@ export function CapturasCompraAdminPanel() {
 
   return (
     <section className="space-y-4">
+      <AvisoFlotante mensaje={mensaje} tipo={tipoAvisoCapturaCompra(mensaje)} onCerrar={() => setMensaje(null)} />
       <div className="grid gap-3 sm:grid-cols-4">
         <ResumenCard titulo="Pendientes" valor={resumen.pendientes} />
         <ResumenCard titulo="Confirmadas" valor={resumen.confirmadas} />
@@ -764,7 +800,6 @@ export function CapturasCompraAdminPanel() {
           </div>
         </form>
 
-        {mensaje ? <p className="mt-3 rounded-md border border-antiguo/15 bg-carbon p-3 text-sm text-champana">{mensaje}</p> : null}
       </div>
 
       <section className="rounded-lg border border-antiguo/15 bg-espresso p-3 shadow-suave sm:p-4">
@@ -866,14 +901,14 @@ export function CapturasCompraAdminPanel() {
                         </div>
 
                         <div className="mt-3 grid gap-2 lg:grid-cols-[minmax(0,1.45fr)_104px_124px_96px_auto]">
-                          <select value={linea.producto_id ?? ""} onChange={(event) => seleccionarProducto(captura.id, linea, event.target.value)} disabled={!editable} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-carbon px-3 text-crema disabled:opacity-60">
-                            <option value="">Sin match - {linea.producto_nombre_detectado ?? "producto"}</option>
-                            {productos.map((producto) => (
-                              <option key={producto.id} value={producto.id}>
-                                {producto.nombre} - {producto.presentacion_compra} x{producto.factor_compra}
-                              </option>
-                            ))}
-                          </select>
+                          <SelectorBuscable
+                            value={linea.producto_id ?? ""}
+                            onChange={(value) => seleccionarProducto(captura.id, linea, value)}
+                            opciones={opcionesProductos}
+                            placeholder={`Sin match - ${linea.producto_nombre_detectado ?? "producto"}`}
+                            sinResultados="No hay productos que coincidan"
+                            disabled={!editable}
+                          />
                           <input type="number" min="1" inputMode="numeric" value={linea.cantidad_ingresada} onChange={(event) => actualizarLinea(captura.id, linea.id, { cantidad_ingresada: Number(event.target.value), precio_catalogo_confirmado: false })} disabled={!editable} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema disabled:opacity-60" />
                           <select value={linea.modo} onChange={(event) => cambiarModo(captura.id, linea, event.target.value as "unidades" | "presentacion")} disabled={!editable} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema disabled:opacity-60">
                             <option value="unidades">Unidades</option>

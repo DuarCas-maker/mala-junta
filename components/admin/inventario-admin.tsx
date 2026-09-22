@@ -1,6 +1,8 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { AvisoFlotante, type TipoAviso } from "@/components/ui/aviso-flotante";
+import { SelectorBuscable, type OpcionSelectorBuscable } from "@/components/ui/selector-buscable";
 import { formatoCOP } from "@/lib/format";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 
@@ -26,6 +28,13 @@ type Auditoria = { id: string; estado: string; created_at: string; auditoria_ite
 function categoriaProducto(producto: Producto) {
   const categoria = Array.isArray(producto.categorias) ? producto.categorias[0] : producto.categorias;
   return categoria?.nombre ?? "Sin categoria";
+}
+
+function tipoAvisoInventario(mensaje: string | null): TipoAviso {
+  if (!mensaje) return "info";
+  const texto = mensaje.toLowerCase();
+  if (["guardad", "registrad", "cread", "cerrada", "actualizad"].some((fragmento) => texto.includes(fragmento))) return "exito";
+  return "error";
 }
 
 export function InventarioAdminPanel({ vista = "todo" }: { vista?: "catalogo" | "auditoria" | "todo" }) {
@@ -80,7 +89,7 @@ export function InventarioAdminPanel({ vista = "todo" }: { vista?: "catalogo" | 
       candidatosRes,
       auditoriasRes,
     ] = await Promise.all([
-      supabase.from("productos").select("id,nombre,precio_venta,costo_unitario_actual,codigo_interno,stock_actual,stock_minimo,presentacion_compra,factor_compra,activo,categorias(nombre)").order("nombre"),
+      supabase.from("v_catalogo_items_stock").select("item_id,nombre,precio_venta,costo_estimado,codigo_interno,stock_disponible,stock_minimo,presentacion_compra,factor_compra,activo,categoria").eq("tipo_item", "producto").order("nombre"),
       supabase.from("categorias").select("id,nombre").eq("activa", true).order("nombre"),
       supabase.from("proveedores").select("id,nombre").eq("activo", true).order("nombre"),
       supabase.from("motivos").select("id,texto").eq("tipo", "ajuste_inventario").eq("activo", true).order("texto"),
@@ -96,7 +105,19 @@ export function InventarioAdminPanel({ vista = "todo" }: { vista?: "catalogo" | 
       return;
     }
 
-    setProductos((productosRes.data ?? []) as unknown as Producto[]);
+    setProductos(((productosRes.data ?? []) as any[]).map((producto) => ({
+      id: producto.item_id,
+      nombre: producto.nombre,
+      precio_venta: Number(producto.precio_venta ?? 0),
+      costo_unitario_actual: Number(producto.costo_estimado ?? 0),
+      codigo_interno: producto.codigo_interno ?? null,
+      stock_actual: Number(producto.stock_disponible ?? 0),
+      stock_minimo: Number(producto.stock_minimo ?? 0),
+      presentacion_compra: producto.presentacion_compra ?? "unidad",
+      factor_compra: Number(producto.factor_compra ?? 1),
+      activo: Boolean(producto.activo),
+      categorias: producto.categoria ? { nombre: producto.categoria } : null,
+    })));
     setCategorias((categoriasRes.data ?? []) as Categoria[]);
     setProveedores((proveedoresRes.data ?? []) as Proveedor[]);
     setMotivos((motivosRes.data ?? []) as Motivo[]);
@@ -111,6 +132,12 @@ export function InventarioAdminPanel({ vista = "todo" }: { vista?: "catalogo" | 
   }, [cargar]);
 
   const auditoriaActiva = useMemo(() => auditorias.find((auditoria) => auditoria.estado === "en_curso"), [auditorias]);
+  const productosActivos = useMemo(() => productos.filter((producto) => producto.activo), [productos]);
+  const opcionesProductosActivos = useMemo<OpcionSelectorBuscable[]>(() => productosActivos.map((producto) => ({
+    value: producto.id,
+    label: `${producto.nombre}${producto.presentacion_compra ? ` - ${producto.presentacion_compra}` : ""}`,
+    busqueda: `${producto.codigo_interno ?? ""} ${categoriaProducto(producto)}`,
+  })), [productosActivos]);
   const productoCompraSeleccionado = productos.find((producto) => producto.id === compraProducto) ?? null;
   const costoCompraCatalogo = Number(productoCompraSeleccionado?.costo_unitario_actual ?? 0);
   const factorCompraAplicado = compraModo === "presentacion" ? Number(productoCompraSeleccionado?.factor_compra ?? 1) : 1;
@@ -247,6 +274,7 @@ export function InventarioAdminPanel({ vista = "todo" }: { vista?: "catalogo" | 
 
   return (
     <section className="grid gap-5">
+      <AvisoFlotante mensaje={mensaje} tipo={tipoAvisoInventario(mensaje)} onCerrar={() => setMensaje(null)} />
       <div className="flex flex-col gap-2 border-b border-antiguo/15 pb-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-sm font-bold uppercase tracking-wide text-oro">F3 Inventario</p>
@@ -254,8 +282,6 @@ export function InventarioAdminPanel({ vista = "todo" }: { vista?: "catalogo" | 
         </div>
         <button onClick={cargar} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-4 font-bold">Refrescar</button>
       </div>
-
-      {mensaje ? <p className="rounded-md border border-antiguo/15 bg-espresso p-3 text-sm font-semibold">{mensaje}</p> : null}
 
       {mostrarCatalogo ? (
         <>
@@ -299,10 +325,7 @@ export function InventarioAdminPanel({ vista = "todo" }: { vista?: "catalogo" | 
               <option value="">Proveedor obligatorio</option>
               {proveedores.map((proveedor) => <option key={proveedor.id} value={proveedor.id}>{proveedor.nombre}</option>)}
             </select>
-            <select value={compraProducto} onChange={(event) => setCompraProducto(event.target.value)} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
-              <option value="">Producto</option>
-              {productos.map((producto) => <option key={producto.id} value={producto.id}>{producto.nombre}</option>)}
-            </select>
+            <SelectorBuscable value={compraProducto} onChange={setCompraProducto} opciones={opcionesProductosActivos} placeholder="Buscar producto" />
             <select value={compraModo} onChange={(event) => setCompraModo(event.target.value as "unidades" | "presentacion")} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
               <option value="unidades">Unidades</option>
               <option value="presentacion">Presentacion de compra</option>
@@ -331,27 +354,18 @@ export function InventarioAdminPanel({ vista = "todo" }: { vista?: "catalogo" | 
             <input value={comboNombre} onChange={(event) => setComboNombre(event.target.value)} placeholder="Nombre combo" className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
             <input value={comboPrecio} onChange={(event) => setComboPrecio(event.target.value)} type="number" placeholder="Precio combo" className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
             <div className="grid grid-cols-[1fr_72px] gap-2">
-              <select value={comboProducto1} onChange={(event) => setComboProducto1(event.target.value)} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
-                <option value="">Producto 1</option>
-                {productos.map((producto) => <option key={producto.id} value={producto.id}>{producto.nombre}</option>)}
-              </select>
+              <SelectorBuscable value={comboProducto1} onChange={setComboProducto1} opciones={opcionesProductosActivos} placeholder="Producto 1" />
               <input value={comboCantidad1} onChange={(event) => setComboCantidad1(event.target.value)} type="number" min="1" className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
             </div>
             <div className="grid grid-cols-[1fr_72px] gap-2">
-              <select value={comboProducto2} onChange={(event) => setComboProducto2(event.target.value)} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
-                <option value="">Producto 2 opcional</option>
-                {productos.map((producto) => <option key={producto.id} value={producto.id}>{producto.nombre}</option>)}
-              </select>
+              <SelectorBuscable value={comboProducto2} onChange={setComboProducto2} opciones={opcionesProductosActivos} placeholder="Producto 2 opcional" />
               <input value={comboCantidad2} onChange={(event) => setComboCantidad2(event.target.value)} type="number" min="1" className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
             </div>
             <button disabled={guardando || !comboNombre || !comboProducto1} className="tap-target rounded-md border border-oro/30 px-4 font-bold text-dorado disabled:opacity-50">Guardar combo</button>
           </form>
 
           <form onSubmit={registrarAjuste} className="mt-4 grid gap-2 border-t border-antiguo/10 pt-4">
-            <select value={ajusteProducto} onChange={(event) => setAjusteProducto(event.target.value)} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">
-              <option value="">Producto ajuste</option>
-              {productos.map((producto) => <option key={producto.id} value={producto.id}>{producto.nombre}</option>)}
-            </select>
+            <SelectorBuscable value={ajusteProducto} onChange={setAjusteProducto} opciones={opcionesProductosActivos} placeholder="Producto ajuste" />
             <div className="grid grid-cols-2 gap-2">
               <input value={ajusteCantidad} onChange={(event) => setAjusteCantidad(event.target.value)} type="number" placeholder="+/- unidades" className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
               <select value={ajusteMotivo} onChange={(event) => setAjusteMotivo(event.target.value)} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema">

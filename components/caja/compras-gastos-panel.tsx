@@ -1,6 +1,8 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { AvisoFlotante, type TipoAviso } from "@/components/ui/aviso-flotante";
+import { SelectorBuscable, type OpcionSelectorBuscable } from "@/components/ui/selector-buscable";
 import { formatoCOP } from "@/lib/format";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 
@@ -20,6 +22,9 @@ type ProductoCompra = {
   stock_minimo: number;
   presentacion_compra: string | null;
   factor_compra: number | null;
+  activo?: boolean;
+  imagen_url?: string | null;
+  imagen_pendiente?: boolean;
 };
 type GastoTurno = {
   id: string;
@@ -86,6 +91,14 @@ function etiquetaProducto(producto?: Pick<ProductoCompra, "nombre" | "presentaci
   return presentacion ? `${producto.nombre} - ${presentacion}` : producto.nombre;
 }
 
+function tipoAvisoCaja(mensaje: string | null): TipoAviso {
+  if (!mensaje) return "info";
+  const texto = mensaje.toLowerCase();
+  if (texto.includes("imagen pendiente")) return "advertencia";
+  if (texto.includes("registrad") || texto.includes("agregado")) return "exito";
+  return "error";
+}
+
 export function ComprasGastosPanel() {
   const [datos, setDatos] = useState<DatosComprasGastos>(datosIniciales);
   const [vista, setVista] = useState<VistaModulo>("urgencia");
@@ -140,6 +153,11 @@ export function ComprasGastosPanel() {
   }, [cargar]);
 
   const productosPorId = useMemo(() => new Map(datos.productos.map((producto) => [producto.id, producto])), [datos.productos]);
+  const opcionesProductos = useMemo<OpcionSelectorBuscable[]>(() => datos.productos.map((producto) => ({
+    value: producto.id,
+    label: `${etiquetaProducto(producto)}${producto.imagen_pendiente ? " - imagen pendiente" : producto.activo === false ? " - inactivo" : ""}`,
+    busqueda: producto.categoria ?? "",
+  })), [datos.productos]);
   const productoSeleccionado = productoId ? productosPorId.get(productoId) ?? null : null;
 
   useEffect(() => {
@@ -173,13 +191,13 @@ export function ComprasGastosPanel() {
 
     if (error) setMensaje(error.message);
     else {
-      setMensaje("Gasto de urgencia registrado.");
       setGastoCategoriaId("");
       setGastoCategoriaNueva("");
       setGastoMonto("");
       setGastoFactura("");
       setGastoObservacion("");
       await cargar();
+      setMensaje("Gasto de urgencia registrado.");
     }
     setProcesando(false);
   }
@@ -236,13 +254,14 @@ export function ComprasGastosPanel() {
     if (error) setMensaje(error.message);
     else {
       const resultado = data as { total?: number; items?: number } | null;
-      setMensaje(`Compra registrada. Items: ${resultado?.items ?? lineas.length}. Total: ${formatoCOP(resultado?.total ?? totalCompra)}.`);
+      const mensajeExito = `Compra registrada. Items: ${resultado?.items ?? lineas.length}. Total: ${formatoCOP(resultado?.total ?? totalCompra)}.`;
       setProveedorId("");
       setProveedorNuevo("");
       setCompraFactura("");
       setCompraObservacion("");
       setLineas([]);
       await cargar();
+      setMensaje(mensajeExito);
     }
     setProcesando(false);
   }
@@ -267,7 +286,6 @@ export function ComprasGastosPanel() {
     if (error) setMensaje(error.message);
     else {
       const producto = data as ProductoCompra;
-      setMensaje(`Producto creado: ${producto.nombre}. Ya puedes agregarlo a la compra.`);
       setNuevoProductoNombre("");
       setNuevoProductoCategoriaId("");
       setNuevoProductoCategoria("");
@@ -278,6 +296,7 @@ export function ComprasGastosPanel() {
       setNuevoProductoFactor("1");
       await cargar();
       setProductoId(producto.id);
+      setMensaje(`Producto creado, imagen pendiente: ${producto.nombre}. Puedes incluirlo en la compra; seguirá inactivo para ventas hasta cargar su imagen desde Catálogo.`);
     }
     setProcesando(false);
   }
@@ -286,6 +305,7 @@ export function ComprasGastosPanel() {
 
   return (
     <section className="grid gap-5">
+      <AvisoFlotante mensaje={mensaje} tipo={tipoAvisoCaja(mensaje)} onCerrar={() => setMensaje(null)} />
       <div className="flex flex-col gap-3 border-b border-antiguo/15 pb-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-sm font-bold uppercase tracking-wide text-oro">Compras y gastos</p>
@@ -296,7 +316,6 @@ export function ComprasGastosPanel() {
       </div>
 
       {datos.requiere_apertura ? <p className="rounded-md border border-oro/25 bg-espresso p-3 text-sm font-bold text-dorado">Debes abrir caja antes de registrar compras o gastos.</p> : null}
-      {mensaje ? <p className="rounded-md border border-antiguo/15 bg-espresso p-3 text-sm">{mensaje}</p> : null}
 
       <div className="grid grid-cols-2 rounded-md border border-antiguo/20 bg-carbon p-1 sm:max-w-md">
         <button type="button" onClick={() => setVista("urgencia")} className={vista === "urgencia" ? "tap-target rounded bg-oro px-3 text-sm font-black text-carbon" : "tap-target rounded px-3 text-sm font-bold text-crema"}>Gasto urgente</button>
@@ -341,10 +360,13 @@ export function ComprasGastosPanel() {
             <div className="mt-3 rounded-md border border-antiguo/10 bg-carbon p-3">
               <p className="text-sm font-bold text-dorado">Agregar productos</p>
               <div className="mt-2 grid gap-2 lg:grid-cols-[minmax(0,1fr)_135px_110px_140px_auto]">
-                <select value={productoId} onChange={(event) => setProductoId(event.target.value)} className="tap-target min-w-0 rounded-md border border-antiguo/20 bg-espresso px-3 text-crema">
-                  <option value="">Producto</option>
-                  {datos.productos.map((producto) => <option key={producto.id} value={producto.id}>{etiquetaProducto(producto)}</option>)}
-                </select>
+                <SelectorBuscable
+                  value={productoId}
+                  onChange={setProductoId}
+                  opciones={opcionesProductos}
+                  placeholder="Buscar producto"
+                  sinResultados="No hay productos que coincidan"
+                />
                 <select value={modo} onChange={(event) => setModo(event.target.value as ModoCompra)} className="tap-target rounded-md border border-antiguo/20 bg-espresso px-3 text-crema">
                   <option value="unidades">Unidades</option>
                   <option value="presentacion">Presentacion</option>

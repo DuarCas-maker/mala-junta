@@ -2,6 +2,8 @@
 
 import Image from "next/image";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AvisoFlotante, type TipoAviso } from "@/components/ui/aviso-flotante";
+import { SelectorBuscable, type OpcionSelectorBuscable } from "@/components/ui/selector-buscable";
 import { formatoCOP } from "@/lib/format";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 
@@ -15,6 +17,7 @@ type ItemCatalogo = {
   tipo: "producto" | "combo";
   nombre: string;
   precio_venta: number;
+  busqueda?: string;
 };
 
 type CapturaVenta = {
@@ -181,6 +184,13 @@ function diferenciaClass(tipo: TipoDiferencia) {
   return "border-antiguo/10 bg-espresso text-antiguo/80";
 }
 
+function tipoAvisoCapturaVenta(mensaje: string | null): TipoAviso {
+  if (!mensaje) return "info";
+  const texto = mensaje.toLowerCase();
+  if ([" lista", "guardada", "enviada", "eliminada", "agregada", "procesada"].some((fragmento) => texto.includes(fragmento))) return "exito";
+  return "error";
+}
+
 function resumenGrupos(grupos: GrupoRevision[]) {
   const totalLeido = grupos.reduce((sum, grupo) => sum + Number(grupo.total_leido ?? 0), 0);
   const totalEsperado = grupos.reduce((sum, grupo) => sum + Number(grupo.total_esperado ?? 0), 0);
@@ -296,6 +306,11 @@ export function CapturasVentaPanel({ colapsable = false, defaultExpandido = true
   const [pagosEliminados, setPagosEliminados] = useState<string[]>([]);
   const camaraInputRef = useRef<HTMLInputElement | null>(null);
   const galeriaInputRef = useRef<HTMLInputElement | null>(null);
+  const opcionesCatalogo = useMemo<OpcionSelectorBuscable[]>(() => catalogo.map((item) => ({
+    value: item.clave,
+    label: `${item.tipo === "combo" ? "Combo - " : ""}${item.nombre}`,
+    busqueda: item.busqueda,
+  })), [catalogo]);
 
   const cargarHistorial = useCallback(async () => {
     setHistorialCargando(true);
@@ -365,7 +380,7 @@ export function CapturasVentaPanel({ colapsable = false, defaultExpandido = true
     async function cargarCatalogo() {
       const supabase = supabaseBrowser();
       const [{ data: productos, error: productosError }, { data: combos, error: combosError }] = await Promise.all([
-        supabase.from("v_productos_operativos").select("id,nombre,precio_venta,presentacion_compra").order("nombre"),
+        supabase.from("v_productos_operativos").select("id,nombre,precio_venta,presentacion_compra,codigo_interno,categoria").order("nombre"),
         supabase.from("combos").select("id,nombre,precio_venta").eq("activo", true).order("nombre"),
       ]);
 
@@ -379,6 +394,7 @@ export function CapturasVentaPanel({ colapsable = false, defaultExpandido = true
           tipo: "producto" as const,
           nombre: `${producto.nombre}${producto.presentacion_compra ? ` - ${producto.presentacion_compra}` : ""}`,
           precio_venta: Number(producto.precio_venta ?? 0),
+          busqueda: `${producto.codigo_interno ?? ""} ${producto.categoria ?? ""}`,
         })),
         ...((combos ?? []) as any[]).map((combo) => ({
           clave: `combo:${combo.id}`,
@@ -386,6 +402,7 @@ export function CapturasVentaPanel({ colapsable = false, defaultExpandido = true
           tipo: "combo" as const,
           nombre: combo.nombre,
           precio_venta: Number(combo.precio_venta ?? 0),
+          busqueda: "combo",
         })),
       ];
 
@@ -855,6 +872,7 @@ export function CapturasVentaPanel({ colapsable = false, defaultExpandido = true
 
   return (
     <section className="rounded-lg border border-antiguo/15 bg-espresso p-3 shadow-suave sm:p-4">
+      <AvisoFlotante mensaje={mensaje} tipo={tipoAvisoCapturaVenta(mensaje)} onCerrar={() => setMensaje(null)} />
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="text-sm font-bold uppercase tracking-wide text-oro">Lector de foto</p>
@@ -900,8 +918,6 @@ export function CapturasVentaPanel({ colapsable = false, defaultExpandido = true
           </div>
         </div>
       </form>
-
-      {mensaje ? <p className="mt-3 rounded-md border border-antiguo/15 bg-carbon p-3 text-sm text-champana">{mensaje}</p> : null}
 
       {resultado ? (
         <div className="mt-4 space-y-[23px]">
@@ -954,7 +970,14 @@ export function CapturasVentaPanel({ colapsable = false, defaultExpandido = true
                   <div key={linea.id} className="rounded-md border border-antiguo/10 bg-espresso p-3">
                     <p className="text-xs text-antiguo/60">Leido: {linea.texto_original ?? linea.item_nombre_detectado ?? "-"} / match {porcentaje(linea.puntaje_match)}</p>
                     <div className="mt-2 grid gap-2 lg:grid-cols-[1.4fr_80px_110px_110px_auto]">
-                      <select value={valorItem(linea)} onChange={(event) => seleccionarItem(grupo.id, linea, event.target.value)} disabled={capturaCerradaCaja} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema disabled:opacity-60"><option value="">Sin match - {nombreDetectado(linea)}</option>{catalogo.map((item) => <option key={item.clave} value={item.clave}>{item.tipo === "combo" ? "Combo - " : ""}{item.nombre}</option>)}</select>
+                      <SelectorBuscable
+                        value={valorItem(linea)}
+                        onChange={(value) => seleccionarItem(grupo.id, linea, value)}
+                        opciones={opcionesCatalogo}
+                        placeholder={`Sin match - ${nombreDetectado(linea)}`}
+                        sinResultados="No hay productos o combos que coincidan"
+                        disabled={capturaCerradaCaja}
+                      />
                       <input type="number" min="1" inputMode="numeric" value={linea.cantidad} onChange={(event) => actualizarLinea(grupo.id, linea.id, { cantidad: Number(event.target.value) })} disabled={capturaCerradaCaja} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema disabled:opacity-60" />
                       <input type="number" min="0" inputMode="numeric" value={linea.precio_catalogo} onChange={(event) => actualizarLinea(grupo.id, linea.id, { precio_catalogo: Number(event.target.value), requiere_revision: true })} disabled={capturaCerradaCaja} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema disabled:opacity-60" />
                       <p className="rounded-md border border-antiguo/10 bg-carbon px-3 py-3 text-sm font-bold text-dorado">{formatoCOP(linea.subtotal_esperado)}</p>
