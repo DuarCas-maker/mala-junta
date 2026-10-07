@@ -51,7 +51,7 @@ insert into public.parametros (clave, valor, descripcion)
 values
   ('uvt_2026', '52374', 'Valor UVT Colombia 2026. Parametrizable; validar anualmente.'),
   ('propina_sugerida_pct', '10', 'Porcentaje sugerido de propina.'),
-  ('hora_corte_dia_negocio', '"06:00"', 'Hora de corte del día de negocio en America/Bogota.'),
+  ('hora_corte_dia_negocio', '"10:00"', 'Hora de corte del día de negocio en America/Bogota.'),
   ('emisor_nit', '"TODO"', 'NIT del emisor pendiente de confirmar.'),
   ('emisor_razon_social', '"Mala Junta"', 'Razón social o nombre comercial del emisor.'),
   ('emisor_responsabilidades_fiscales', '[]', 'Responsabilidades fiscales DIAN pendientes de contador.')

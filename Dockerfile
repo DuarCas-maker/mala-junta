@@ -38,9 +38,11 @@ RUN addgroup --system --gid 1001 nodejs && \
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/iniciar-servidor.mjs ./scripts/iniciar-servidor.mjs
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/corte-jornada.mjs ./scripts/corte-jornada.mjs
 
 USER nextjs
 
 EXPOSE 3000
 
-CMD ["node", "server.js"]
+CMD ["node", "scripts/iniciar-servidor.mjs"]

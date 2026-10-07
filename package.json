@@ -1,41 +1,47 @@
 {
-    "name":  "mala-junta",
-    "version":  "0.1.0",
-    "private":  true,
-    "scripts":  {
-                    "dev":  "next dev",
-                    "build":  "next build",
-                    "start":  "next start",
-                    "lint":  "eslint .",
-                    "typecheck":  "tsc --noEmit",
-                    "supabase:start":  "supabase start",
-                    "supabase:reset":  "supabase db reset",
-                    "test:sql:f0":  "supabase test db --local tests/rls/f0.sql",
-                    "test:sql:f6":  "supabase test db --local tests/rls/f6_compras_ocr.sql",
-                    "test:sql:f7":  "supabase test db --local tests/rls/f7_inventario_negativo.sql",
-                    "test:sql:f8":  "supabase test db --local tests/rls/f8_reconciliar_cuenta_pagada.sql"
-                },
-    "dependencies":  {
-                         "@supabase/supabase-js":  "^2.45.4",
-                         "@tanstack/react-query":  "^5.59.16",
-                         "next":  "^15.0.3",
-                         "react":  "^19.0.0",
-                         "react-dom":  "^19.0.0",
-                         "recharts":  "^3.10.1"
-                     },
-    "devDependencies":  {
-                            "@types/node":  "^22.9.0",
-                            "@types/react":  "^19.0.0",
-                            "@types/react-dom":  "^19.0.0",
-                            "autoprefixer":  "^10.4.20",
-                            "eslint":  "^9.14.0",
-                            "eslint-config-next":  "^15.0.3",
-                            "postcss":  "^8.5.18",
-                            "supabase":  "^2.110.0",
-                            "tailwindcss":  "^3.4.14",
-                            "typescript":  "^5.6.3"
-                        },
-    "overrides":  {
-                      "sharp":  "^0.35.0"
-                  }
+    "name": "mala-junta",
+    "version": "0.1.0",
+    "private": true,
+    "scripts": {
+        "dev": "next dev",
+        "build": "next build",
+        "start": "node --env-file-if-exists=.env.local scripts/iniciar-servidor.mjs",
+        "lint": "eslint .",
+        "typecheck": "tsc --noEmit",
+        "supabase:start": "supabase start",
+        "supabase:reset": "supabase db reset",
+        "test:sql:f0": "supabase test db --local tests/rls/f0.sql",
+        "test:sql:f6": "supabase test db --local tests/rls/f6_compras_ocr.sql",
+        "test:sql:f7": "supabase test db --local tests/rls/f7_inventario_negativo.sql",
+        "test:sql:f8": "supabase test db --local tests/rls/f8_reconciliar_cuenta_pagada.sql",
+        "jornada:worker": "node --env-file-if-exists=.env.local scripts/corte-jornada.mjs",
+        "test:sql:f9": "supabase test db --local tests/rls/f9_pendientes_jornada.sql",
+        "test:jornada": "node --experimental-strip-types --test tests/jornada.test.mjs tests/corte-jornada.test.mjs",
+        "test:db:jornada": "node tests/db-jornada.mjs"
+    },
+    "dependencies": {
+        "@supabase/supabase-js": "^2.45.4",
+        "@tanstack/react-query": "^5.59.16",
+        "next": "^15.0.3",
+        "react": "^19.0.0",
+        "react-dom": "^19.0.0",
+        "recharts": "^3.10.1"
+    },
+    "devDependencies": {
+        "@electric-sql/pglite": "^0.5.8",
+        "@electric-sql/pglite-pgtap": "^0.0.9",
+        "@types/node": "^22.9.0",
+        "@types/react": "^19.0.0",
+        "@types/react-dom": "^19.0.0",
+        "autoprefixer": "^10.4.20",
+        "eslint": "^9.14.0",
+        "eslint-config-next": "^15.0.3",
+        "postcss": "^8.5.18",
+        "supabase": "^2.110.0",
+        "tailwindcss": "^3.4.14",
+        "typescript": "^5.6.3"
+    },
+    "overrides": {
+        "sharp": "^0.35.0"
+    }
 }

@@ -79,6 +79,8 @@ select ok(
   'La mesa deja de tener una cuenta activa'
 );
 
+-- La auditoria solo es visible para admin; caja no tiene permiso de lectura.
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000001', true);
 select ok(
   exists (
     select 1

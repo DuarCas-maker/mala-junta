@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { estadoPedidoTexto, formatoCOP } from "@/lib/format";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { usePerfilProtegido } from "@/lib/use-perfil-protegido";
+import { diaJornada, esCuentaPendiente } from "@/lib/jornada";
 
 type MedioPago = "efectivo" | "datafono" | "nequi_daviplata" | "transferencia";
 type Motivo = { id: string; texto: string };
@@ -74,16 +75,6 @@ function relacionUno<T = any>(valor: T | T[] | null | undefined): T | null {
   return valor ?? null;
 }
 
-function estadoCobroDesdePedido(cuenta: Cuenta, pedidos: PedidoHistorial[]) {
-  if (cuenta.estado === "pendiente") return "Pendiente";
-  if (cuenta.estado === "pagada_parcial") return "Pago parcial";
-  if (cuenta.estado === "por_cobrar") return "Por cobrar";
-  if (pedidos.some((pedido) => pedido.estado === "en_preparacion")) return "En preparacion";
-  if (pedidos.some((pedido) => pedido.estado === "enviado")) return "Enviado";
-  if (pedidos.length > 0) return "Por cobrar";
-  return "Abierta";
-}
-
 function completarCuentasConHistorial(cuentasRpc: Cuenta[], pedidos: PedidoHistorial[]) {
   const cuentasPorId = new Map<string, Cuenta>();
 
@@ -107,19 +98,7 @@ function completarCuentasConHistorial(cuentasRpc: Cuenta[], pedidos: PedidoHisto
       return;
     }
 
-    cuentasPorId.set(cuentaPedido.id, {
-      ...cuentaPedido,
-      estado_cobro: estadoCobroDesdePedido(cuentaPedido, [pedido]),
-      prioridad_cobro: pedido.estado === "en_preparacion" ? 2 : pedido.estado === "enviado" ? 3 : 1,
-      pedido_estado_prioridad: pedido.estado === "entregado" ? 1 : pedido.estado === "en_preparacion" ? 2 : pedido.estado === "enviado" ? 3 : 9,
-      ultimo_pedido_at: pedido.enviado_at,
-      total_pagado: 0,
-      saldo: Number(cuentaPedido.total_cuenta ?? 0),
-      perfiles: { nombre: "-" },
-      documentos: [],
-      pagos: [],
-      pedidos: [pedido],
-    });
+    // El historial no tiene el saldo ni la ocupacion completos: la RPC es la fuente de cuentas.
   });
 
   return normalizarCuentasCaja([...cuentasPorId.values()]);
@@ -172,19 +151,12 @@ function cuentaPedido(pedido: PedidoHistorial) {
 
 function fechaPedido(fecha?: string) {
   if (!fecha) return "-";
-  return new Date(fecha).toLocaleString("es-CO", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+  return new Date(fecha).toLocaleString("es-CO", { timeZone: "America/Bogota", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
 function fechaPedidoGrande(fecha?: string) {
   if (!fecha) return "Sin fecha";
-  return new Date(fecha).toLocaleString("es-CO", { weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
-}
-
-function fechaLocalISO(fecha?: string | Date) {
-  if (!fecha) return "";
-  const date = typeof fecha === "string" ? new Date(fecha) : fecha;
-  if (Number.isNaN(date.getTime())) return "";
-  return new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+  return new Date(fecha).toLocaleString("es-CO", { timeZone: "America/Bogota", weekday: "short", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
 function pedidosCuenta(cuenta: Cuenta) {
@@ -259,10 +231,10 @@ function fechaMsCuenta(cuenta: Cuenta) {
 }
 
 function cuentaTienePedidoDelDia(cuenta: Cuenta, fechaISO: string) {
-  if (cuenta.estado === "pendiente") return true;
+  if (cuenta.dia_negocio) return cuenta.dia_negocio === fechaISO;
   const pedidos = pedidosCuenta(cuenta);
-  if (pedidos.length === 0) return fechaLocalISO(fechaPrincipalCuenta(cuenta)) === fechaISO;
-  return pedidos.some((pedido: PedidoHistorial) => fechaLocalISO(pedido.enviado_at) === fechaISO);
+  if (pedidos.length === 0) return diaJornada(fechaPrincipalCuenta(cuenta)) === fechaISO;
+  return pedidos.some((pedido: PedidoHistorial) => diaJornada(pedido.enviado_at) === fechaISO);
 }
 
 function ordenarPedidosPorFecha(pedidos: PedidoHistorial[]) {
@@ -290,6 +262,10 @@ export function CajaOperativa() {
   const [mensajesCantidad, setMensajesCantidad] = useState<Record<string, { tipo: "ok" | "error"; texto: string }>>({});
   const [requiereAperturaCaja, setRequiereAperturaCaja] = useState(false);
   const [filtroFechaCobros, setFiltroFechaCobros] = useState<FiltroFechaCobros>("hoy");
+  const [pestanaCobros, setPestanaCobros] = useState<"actuales" | "pendientes">("actuales");
+  const [busquedaPendientes, setBusquedaPendientes] = useState("");
+  const [pendientesDesde, setPendientesDesde] = useState("");
+  const [pendientesHasta, setPendientesHasta] = useState("");
   const [cuentasExpandidas, setCuentasExpandidas] = useState<Record<string, boolean>>({});
   const [accionAnulacion, setAccionAnulacion] = useState<AccionAnulacionCaja | null>(null);
 
@@ -362,12 +338,24 @@ export function CajaOperativa() {
   }, [perfil, cargar]);
 
   const cuentasVisibles = useMemo(() => {
-    const hoyISO = fechaLocalISO(new Date());
+    const hoyISO = cuentas[0]?.dia_jornada_actual ?? diaJornada();
+    const busqueda = busquedaPendientes.trim().toLocaleLowerCase("es");
     return cuentas
-      .filter((cuenta) => filtroFechaCobros === "todos" || cuentaTienePedidoDelDia(cuenta, hoyISO))
+      .filter((cuenta) => {
+        if (pestanaCobros === "actuales") {
+          return !esCuentaPendiente(cuenta) && (filtroFechaCobros === "todos" || cuentaTienePedidoDelDia(cuenta, hoyISO));
+        }
+        if (!esCuentaPendiente(cuenta)) return false;
+        const jornada = cuenta.dia_negocio ?? diaJornada(cuenta.created_at);
+        if ((pendientesDesde && jornada < pendientesDesde) || (pendientesHasta && jornada > pendientesHasta)) return false;
+        const texto = `${cuenta.id} ${nombreMesa(cuenta)} ${cuenta.responsable_pendiente ?? "Pendiente por identificar"}`.toLocaleLowerCase("es");
+        return !busqueda || texto.includes(busqueda);
+      })
       .map((cuenta) => ({ ...cuenta, pedidos: ordenarPedidosPorFecha(pedidosCuenta(cuenta)) }))
       .sort((a, b) => fechaMsCuenta(b) - fechaMsCuenta(a));
-  }, [cuentas, filtroFechaCobros]);
+  }, [cuentas, filtroFechaCobros, pestanaCobros, busquedaPendientes, pendientesDesde, pendientesHasta]);
+
+  const cantidadPendientes = cuentas.filter(esCuentaPendiente).length;
 
   const resumen = useMemo(() => {
     const totalAbierto = cuentasVisibles.reduce((sum, cuenta) => sum + Number(cuenta.total_cuenta ?? 0), 0);
@@ -567,7 +555,7 @@ export function CajaOperativa() {
     const monto = Number(montosPago[cuentaId] ?? 0);
     const medio = mediosSeleccionados[cuentaId] ?? "efectivo";
     const dejaPendiente = Boolean(pendiente[cuentaId]);
-    const responsable = responsables[cuentaId]?.trim() ?? "";
+    const responsable = (responsables[cuentaId] ?? cuenta.responsable_pendiente ?? "").trim();
     const saldoActual = Math.max(Number(cuenta.total_cuenta ?? 0) - totalPagado(cuenta), 0);
     const cambioEfectivo = !dejaPendiente && medio === "efectivo" ? Math.max(monto - saldoActual, 0) : 0;
     const montoAplicado = cambioEfectivo > 0 ? saldoActual : monto;
@@ -642,15 +630,22 @@ export function CajaOperativa() {
     await cargar();
   }
 
-  async function quitarPendiente(cuentaId: string) {
+  async function guardarResponsable(cuentaId: string) {
+    const responsable = responsables[cuentaId]?.trim() ?? "";
+    if (responsable.length < 2) {
+      setMensaje("Escribe el nombre del cliente o responsable del pendiente.");
+      return;
+    }
     setMensaje(null);
     setProcesando(cuentaId);
     const supabase = supabaseBrowser();
-    const { error: rpcError } = await supabase.rpc("quitar_pendiente_cuenta_caja", { p_cuenta_id: cuentaId });
-    if (rpcError) setMensaje(rpcError.message);
-    else setMensaje("La cuenta volvio a Por cobrar.");
+    const { error: rpcError } = await supabase.rpc("actualizar_responsable_pendiente", { p_cuenta_id: cuentaId, p_responsable: responsable });
     setProcesando(null);
-    await cargar();
+    if (rpcError) setMensaje(rpcError.message);
+    else {
+      await cargar();
+      setMensaje("Responsable del pendiente guardado.");
+    }
   }
 
   if (cargando) return <main className="min-h-screen p-5 text-champana">Cargando...</main>;
@@ -702,7 +697,7 @@ export function CajaOperativa() {
           />
         ) : (
           <>
-            <CierreCajaPanel perfil={perfil!} onResumenChange={manejarResumenCaja} />
+            <CierreCajaPanel perfil={perfil!} onResumenChange={manejarResumenCaja} onCierre={cargar} />
 
         {actualizadoAt ? <p className="text-xs font-bold uppercase tracking-wide text-antiguo/55">Actualizado {actualizadoAt}</p> : null}
         {mensaje ? <p className="rounded-md border border-antiguo/15 bg-espresso p-3 text-sm">{mensaje}</p> : null}
@@ -711,26 +706,47 @@ export function CajaOperativa() {
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-sm font-bold uppercase tracking-wide text-oro">Cobros</p>
-              <h2 className="text-xl font-black text-crema">Pedidos por cobrar</h2>
+              <h2 className="text-xl font-black text-crema">{pestanaCobros === "pendientes" ? "Cuentas pendientes" : "Pedidos por cobrar"}</h2>
             </div>
             <div className="flex flex-wrap gap-2">
-              <div className="grid grid-cols-2 rounded-md border border-antiguo/20 bg-carbon p-1">
-                <button type="button" onClick={() => setFiltroFechaCobros("hoy")} className={filtroFechaCobros === "hoy" ? "tap-target rounded bg-oro px-3 text-sm font-black text-carbon" : "tap-target rounded px-3 text-sm font-bold text-crema"}>Hoy</button>
+              {pestanaCobros === "actuales" ? <div className="grid grid-cols-2 rounded-md border border-antiguo/20 bg-carbon p-1">
+                <button type="button" onClick={() => setFiltroFechaCobros("hoy")} className={filtroFechaCobros === "hoy" ? "tap-target rounded bg-oro px-3 text-sm font-black text-carbon" : "tap-target rounded px-3 text-sm font-bold text-crema"}>Esta jornada</button>
                 <button type="button" onClick={() => setFiltroFechaCobros("todos")} className={filtroFechaCobros === "todos" ? "tap-target rounded bg-oro px-3 text-sm font-black text-carbon" : "tap-target rounded px-3 text-sm font-bold text-crema"}>Todos</button>
-              </div>
+              </div> : null}
               <button onClick={cargar} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-4 text-sm font-bold">Actualizar</button>
             </div>
           </div>
+
+          <div className="mt-3 flex gap-2" role="tablist" aria-label="Cuentas por cobrar">
+            <button type="button" role="tab" aria-selected={pestanaCobros === "actuales"} onClick={() => setPestanaCobros("actuales")} className={pestanaCobros === "actuales" ? "tap-target rounded-md bg-oro px-4 font-black text-carbon" : "tap-target rounded-md border border-antiguo/20 px-4 font-bold text-crema"}>Jornada actual</button>
+            <button type="button" role="tab" aria-selected={pestanaCobros === "pendientes"} onClick={() => setPestanaCobros("pendientes")} className={pestanaCobros === "pendientes" ? "tap-target rounded-md bg-oro px-4 font-black text-carbon" : "tap-target rounded-md border border-antiguo/20 px-4 font-bold text-crema"}>Pendientes ({cantidadPendientes})</button>
+          </div>
+          {pestanaCobros === "pendientes" ? (
+            <div className="mt-3 space-y-3">
+              <p className="text-sm text-antiguo/70">Estas cuentas conservan su saldo y su mesa original. Las mesas ya estan disponibles para nuevas cuentas.</p>
+              <div className="grid gap-3 sm:grid-cols-[1fr_170px_170px]">
+                <label className="text-xs font-bold text-antiguo/80">Buscar responsable, mesa o cuenta
+                  <input value={busquedaPendientes} onChange={(event) => setBusquedaPendientes(event.target.value)} placeholder="Nombre, mesa o numero de cuenta" className="tap-target mt-1 w-full rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
+                </label>
+                <label className="text-xs font-bold text-antiguo/80">Jornada desde
+                  <input type="date" value={pendientesDesde} max={pendientesHasta || undefined} onChange={(event) => setPendientesDesde(event.target.value)} className="tap-target mt-1 w-full rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
+                </label>
+                <label className="text-xs font-bold text-antiguo/80">Jornada hasta
+                  <input type="date" value={pendientesHasta} min={pendientesDesde || undefined} onChange={(event) => setPendientesHasta(event.target.value)} className="tap-target mt-1 w-full rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
+                </label>
+              </div>
+            </div>
+          ) : null}
 
           <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <div className="rounded-md border border-antiguo/15 bg-carbon p-4">
               <p className="text-sm text-antiguo/70">Cuentas visibles</p>
               <p className="text-2xl font-black text-crema">{cuentasVisibles.length}</p>
-              {filtroFechaCobros === "hoy" ? <p className="mt-1 text-xs text-antiguo/55">Filtro: hoy</p> : <p className="mt-1 text-xs text-antiguo/55">Total activo: {cuentas.length}</p>}
+              <p className="mt-1 text-xs text-antiguo/55">{pestanaCobros === "pendientes" ? "Pendientes segun filtros" : filtroFechaCobros === "hoy" ? "Jornada: 10:00 a 09:59 del dia siguiente" : "Todas las cuentas en mesa"}</p>
             </div>
             <div className="rounded-md border border-antiguo/15 bg-carbon p-4">
-              <p className="text-sm text-antiguo/70">Total abierto</p>
-              <p className="text-2xl font-black text-dorado">{formatoCOP(resumen.totalAbierto)}</p>
+              <p className="text-sm text-antiguo/70">{pestanaCobros === "pendientes" ? "Saldo por cobrar" : "Total abierto"}</p>
+              <p className="text-2xl font-black text-dorado">{formatoCOP(pestanaCobros === "pendientes" ? Math.max(resumen.totalAbierto - resumen.totalRecibido, 0) : resumen.totalAbierto)}</p>
             </div>
             <div className="rounded-md border border-antiguo/15 bg-carbon p-4">
               <p className="text-sm text-antiguo/70">Abonos visibles</p>
@@ -763,6 +779,8 @@ export function CajaOperativa() {
                   <div>
                     <p className="text-lg font-black text-dorado sm:text-xl">{fechaPedidoGrande(fechaCuenta)}</p>
                     <p className="text-sm font-bold text-oro">{nombreMesa(cuenta)}</p>
+                    <p className="text-xs text-antiguo/70">Jornada original: {cuenta.dia_negocio ?? "-"}</p>
+                    <p className="break-all text-xs text-antiguo/60">Cuenta: {cuenta.id}</p>
                     <h2 className="text-xl font-black text-crema">{estadoCobroCuenta(cuenta)}</h2>
                     <p className="text-xs text-antiguo/60">Estado cuenta: {cuenta.estado}</p>
                     {cuenta.responsable_pendiente ? <p className="text-sm text-dorado">Pendiente: {cuenta.responsable_pendiente}</p> : null}
@@ -774,6 +792,17 @@ export function CajaOperativa() {
                     <p className="text-xs text-antiguo/60">Total {formatoCOP(total)} / pagado {formatoCOP(pagado)}</p>
                   </div>
                 </div>
+
+                {esCuentaPendiente(cuenta) ? (
+                  <div className="mt-3 rounded-md border border-oro/20 bg-carbon p-3">
+                    <p className="text-sm font-bold text-dorado">{cuenta.responsable_pendiente ? `Responsable: ${cuenta.responsable_pendiente}` : "Pendiente por identificar"}</p>
+                    <p className="mt-1 text-xs text-antiguo/65">Mesa liberada {fechaPedido(cuenta.mesa_liberada_at)}. Los abonos se aplican solo a esta cuenta.</p>
+                    <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                      <input aria-label="Responsable del pendiente" value={responsables[cuenta.id] ?? cuenta.responsable_pendiente ?? ""} onChange={(event) => setResponsables((actual) => ({ ...actual, [cuenta.id]: event.target.value }))} placeholder="Nombre del cliente o responsable" className="tap-target min-w-0 flex-1 rounded-md border border-antiguo/20 bg-espresso px-3 text-crema" />
+                      <button type="button" disabled={bloqueada} onClick={() => guardarResponsable(cuenta.id)} className="tap-target rounded-md border border-oro/30 px-3 text-sm font-bold text-dorado">Guardar responsable</button>
+                    </div>
+                  </div>
+                ) : null}
 
                 <div className="mt-3 rounded-md border border-antiguo/10 bg-carbon p-3">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -940,11 +969,11 @@ export function CajaOperativa() {
                       Propina opcional
                       <input type="number" min="0" inputMode="numeric" value={propinas[cuenta.id] ?? ""} onChange={(event) => setPropinas((actual) => ({ ...actual, [cuenta.id]: event.target.value }))} className="tap-target mt-1 w-full rounded-md border border-antiguo/20 bg-espresso px-3 text-crema" />
                     </label>
-                    <label className="flex items-center gap-2 rounded-md border border-antiguo/15 bg-espresso px-3 text-sm font-bold">
+                    {!esCuentaPendiente(cuenta) ? <label className="flex items-center gap-2 rounded-md border border-antiguo/15 bg-espresso px-3 text-sm font-bold">
                       <input type="checkbox" checked={Boolean(pendiente[cuenta.id])} onChange={(event) => setPendiente((actual) => ({ ...actual, [cuenta.id]: event.target.checked }))} />
                       Dejar pendiente
-                    </label>
-                    <input value={responsables[cuenta.id] ?? ""} onChange={(event) => setResponsables((actual) => ({ ...actual, [cuenta.id]: event.target.value }))} placeholder="Responsable" className="tap-target rounded-md border border-antiguo/20 bg-espresso px-3 text-crema placeholder:text-antiguo/50" />
+                    </label> : null}
+                    {!esCuentaPendiente(cuenta) ? <input value={responsables[cuenta.id] ?? ""} onChange={(event) => setResponsables((actual) => ({ ...actual, [cuenta.id]: event.target.value }))} placeholder="Responsable" className="tap-target rounded-md border border-antiguo/20 bg-espresso px-3 text-crema placeholder:text-antiguo/50" /> : null}
                   </div>
 
                   <div className="mt-3 rounded-md border border-antiguo/10 bg-espresso p-3">
@@ -976,9 +1005,6 @@ export function CajaOperativa() {
                   </div>
                   {cambioEfectivo > 0 ? <p className="mt-2 rounded-md border border-dorado/30 bg-oro/10 p-2 text-sm font-bold text-dorado">Se aplican {formatoCOP(saldo)} a la cuenta. Cambio: {formatoCOP(cambioEfectivo)}.</p> : null}
                   {pagoNoEfectivoExcedeSaldo ? <p className="mt-2 text-xs font-bold text-red-200">El pago no puede superar el saldo de {formatoCOP(saldo)}.</p> : null}
-                  {cuenta.estado === "pendiente" ? (
-                    <button type="button" disabled={bloqueada} onClick={() => quitarPendiente(cuenta.id)} className="tap-target mt-2 w-full rounded-md border border-antiguo/20 px-3 text-sm font-bold text-crema disabled:opacity-50">Quitar pendiente</button>
-                  ) : null}
                 </section>
                 )}
                 </>
@@ -988,7 +1014,7 @@ export function CajaOperativa() {
           })}
         </div>
 
-          {cuentasVisibles.length === 0 ? <p className="mt-4 rounded-md border border-antiguo/15 bg-carbon p-6 text-center text-antiguo/70">{filtroFechaCobros === "hoy" ? "No hay pedidos por cobrar de hoy." : "No hay cuentas activas."}</p> : null}
+          {cuentasVisibles.length === 0 ? <p className="mt-4 rounded-md border border-antiguo/15 bg-carbon p-6 text-center text-antiguo/70">{pestanaCobros === "pendientes" ? "No hay pendientes con estos filtros." : filtroFechaCobros === "hoy" ? "No hay pedidos por cobrar de esta jornada." : "No hay cuentas activas."}</p> : null}
         </section>
 
         <CapturasVentaPanel colapsable defaultExpandido={false} />

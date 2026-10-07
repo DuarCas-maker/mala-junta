@@ -22,7 +22,8 @@ type ItemVenta = {
 };
 type Cantidades = Record<string, number>;
 type PedidoItemPayload = { producto_id?: string; combo_id?: string; cantidad: number };
-type PedidoPendiente = { id: string; mesaId: string; items: PedidoItemPayload[]; notas: string; nickname: string; creado: string };
+type PayloadPedido = { id: string; mesaId: string; items: PedidoItemPayload[]; notas: string; nickname: string; creado: string; cuentaEsperadaId: string | null };
+type PedidoPendiente = Omit<PayloadPedido, "cuentaEsperadaId"> & { id: string; cuentaEsperadaId?: string | null };
 type PedidoHistorial = any;
 
 type Props = {
@@ -113,7 +114,7 @@ async function cargarMesasParaPedidos(supabase: ReturnType<typeof supabaseBrowse
 
 function fechaPedido(fecha?: string) {
   if (!fecha) return "-";
-  return new Date(fecha).toLocaleString("es-CO", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+  return new Date(fecha).toLocaleString("es-CO", { timeZone: "America/Bogota", year: "numeric", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
 function nombreHistorialItem(item: any) {
@@ -164,6 +165,7 @@ export function PedidoRapidoPanel({
   const [mensaje, setMensaje] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
   const [pendientes, setPendientes] = useState<PedidoPendiente[]>([]);
+  const [pedidoEnRevision, setPedidoEnRevision] = useState<string | null>(null);
   const [historial, setHistorial] = useState<PedidoHistorial[]>([]);
   const [categoriaFiltro, setCategoriaFiltro] = useState("");
   const [busqueda, setBusqueda] = useState("");
@@ -343,20 +345,30 @@ export function PedidoRapidoPanel({
     setMesas(mesasData);
   }
 
-  async function enviarPayload(payload: { mesaId: string; items: PedidoItemPayload[]; notas: string; nickname: string }) {
+  async function enviarPayload(payload: PayloadPedido) {
     const supabase = supabaseBrowser();
     const { error: rpcError } = await supabase.rpc("crear_pedido_rapido", {
       p_mesa_id: payload.mesaId || null,
       p_items: payload.items,
       p_notas: payload.notas || null,
       p_nickname: payload.nickname || null,
+      p_validar_cuenta: true,
+      p_cuenta_esperada_id: payload.cuentaEsperadaId,
+      p_creado_at: payload.creado,
+      p_solicitud_id: payload.id,
     });
-    if (rpcError) throw new Error(rpcError.message);
+    if (rpcError) {
+      const errores: Record<string, string> = {
+        pedido_jornada_anterior_requiere_revision: "El pedido es de otra jornada. Revisalo antes de enviarlo.",
+        mesa_cambio_de_cuenta_revisar_pedido: "La mesa cambio de cuenta. Revisa el pedido y selecciona su destino antes de enviarlo.",
+      };
+      throw new Error(errores[rpcError.message] ?? rpcError.message);
+    }
   }
 
-  function guardarComoPendiente(payload: { mesaId: string; items: PedidoItemPayload[]; notas: string; nickname: string }) {
-    const nuevo: PedidoPendiente = { id: crypto.randomUUID(), ...payload, creado: new Date().toISOString() };
-    const siguientes = [nuevo, ...leerPendientes()];
+  function guardarComoPendiente(payload: PayloadPedido) {
+    const nuevo: PedidoPendiente = { ...payload };
+    const siguientes = [nuevo, ...leerPendientes().filter((pedido) => pedido.id !== nuevo.id)];
     guardarPendientes(siguientes);
     setPendientes(siguientes);
   }
@@ -380,12 +392,14 @@ export function PedidoRapidoPanel({
 
     try {
       if (items.length === 0) throw new Error("Agrega al menos un producto o combo.");
-      const payload = { mesaId, items, notas, nickname: nickname.trim() };
+      if (mesaId === "__revisar__") throw new Error("Selecciona la mesa o venta directa para el pedido que estas revisando.");
+      const payload: PayloadPedido = { id: pedidoEnRevision ?? crypto.randomUUID(), mesaId, items, notas, nickname: nickname.trim(), creado: new Date().toISOString(), cuentaEsperadaId: mesaSeleccionada?.cuenta_id ?? null };
 
       try {
         await enviarPayload(payload);
       } catch (err) {
         guardarComoPendiente(payload);
+        setPedidoEnRevision(null);
         setMensaje(`No se pudo sincronizar: ${err instanceof Error ? err.message : "error desconocido"}. Quedo guardado para reintentar.`);
         setCantidades({});
         setItemActivo(null);
@@ -395,6 +409,12 @@ export function PedidoRapidoPanel({
       }
 
       setMensaje("Pedido sincronizado con la mesa.");
+      if (pedidoEnRevision) {
+        const restantes = leerPendientes().filter((pedido) => pedido.id !== pedidoEnRevision);
+        guardarPendientes(restantes);
+        setPendientes(restantes);
+        setPedidoEnRevision(null);
+      }
       setCantidades({});
       setItemActivo(null);
       setNotas("");
@@ -421,7 +441,12 @@ export function PedidoRapidoPanel({
     setEnviando(true);
     setMensaje("Reintentando pedido pendiente...");
     try {
-      await enviarPayload(pendiente);
+      if (pendiente.cuentaEsperadaId === undefined) {
+        throw new Error("Este pedido no tiene identificada su cuenta original. Usa Revisar pedido.");
+      }
+      // La RPC recupera envios ya confirmados antes de validar jornada y ocupacion.
+      // Una respuesta perdida no duplica el pedido aunque ya haya cambiado el dia.
+      await enviarPayload({ ...pendiente, cuentaEsperadaId: pendiente.cuentaEsperadaId });
       const restantes = leerPendientes().filter((item) => item.id !== pendiente.id);
       guardarPendientes(restantes);
       setPendientes(restantes);
@@ -440,6 +465,28 @@ export function PedidoRapidoPanel({
     }
   }
 
+  function revisarPendiente(pendiente: PedidoPendiente) {
+    if (itemsSeleccionados.length > 0) {
+      setMensaje("Termina o vacia el pedido actual antes de revisar otro.");
+      return;
+    }
+    const cantidadesRecuperadas: Cantidades = {};
+    for (const item of pendiente.items) {
+      const clave = item.combo_id ? `combo:${item.combo_id}` : `producto:${item.producto_id}`;
+      if (!itemsVenta.some((producto) => producto.clave === clave)) {
+        setMensaje("El pedido tiene productos que ya no estan disponibles. Conserva el pendiente y revisalo con caja.");
+        return;
+      }
+      cantidadesRecuperadas[clave] = (cantidadesRecuperadas[clave] ?? 0) + item.cantidad;
+    }
+    setPedidoEnRevision(pendiente.id);
+    setCantidades(cantidadesRecuperadas);
+    setMesaId("__revisar__");
+    setNickname(pendiente.nickname);
+    setNotas(`${pendiente.notas ? `${pendiente.notas}\n` : ""}Pedido recuperado, creado originalmente ${fechaPedido(pendiente.creado)}.`);
+    setMensaje("Pedido cargado para revision. Selecciona la mesa o venta directa y verifica productos y precios. Al enviarlo se registrara en la jornada actual; el pendiente se conserva hasta confirmar el envio.");
+  }
+
   return (
     <section className={className}>
       <header className="flex flex-col gap-3 border-b border-antiguo/15 pb-4 sm:flex-row sm:items-center sm:justify-between">
@@ -456,15 +503,20 @@ export function PedidoRapidoPanel({
           <p className="text-sm font-bold text-dorado">Pedidos pendientes por sincronizar: {pendientes.length}</p>
           <div className="mt-2 flex flex-wrap gap-2">
             {pendientes.map((pendiente) => (
-              <button key={pendiente.id} onClick={() => reintentarPendiente(pendiente)} className="tap-target rounded-md border border-antiguo/20 px-3 text-sm font-bold" disabled={enviando}>
-                Reintentar {pendiente.items.length} items
-              </button>
+              <div key={pendiente.id} className="rounded-md border border-antiguo/20 p-2">
+                <p className="mb-2 text-xs text-antiguo/70">{fechaPedido(pendiente.creado)} / {pendiente.items.length} items</p>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={() => reintentarPendiente(pendiente)} className="tap-target rounded-md border border-antiguo/20 px-3 text-sm font-bold" disabled={enviando || Boolean(pedidoEnRevision)}>Reintentar</button>
+                  <button type="button" onClick={() => revisarPendiente(pendiente)} className="tap-target rounded-md border border-oro/30 px-3 text-sm font-bold text-dorado" disabled={enviando || Boolean(pedidoEnRevision)}>Revisar pedido</button>
+                </div>
+              </div>
             ))}
           </div>
         </section>
       ) : null}
 
       <form onSubmit={enviarPedido} className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px] xl:items-start">
+        {pedidoEnRevision ? <div className="rounded-md border border-oro/30 bg-carbon p-3 text-sm xl:col-span-2">Estas revisando un pedido guardado. Selecciona su destino antes de enviarlo.<button type="button" onClick={() => { setPedidoEnRevision(null); setCantidades({}); setNotas(""); setNickname(""); }} className="tap-target ml-2 rounded-md border border-antiguo/20 px-3 font-bold">Cancelar revision</button></div> : null}
         <section className="min-w-0">
           <div className="rounded-lg border border-antiguo/15 bg-espresso p-3 shadow-suave">
             <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-end">
@@ -479,6 +531,7 @@ export function PedidoRapidoPanel({
                   }}
                   className="tap-target mt-1 w-full rounded-md border border-antiguo/20 bg-carbon px-3 text-crema"
                 >
+                  {pedidoEnRevision ? <option value="__revisar__">Selecciona el destino del pedido</option> : null}
                   <option value="">Pedido directo</option>
                   {mesasAbiertas.length > 0 ? (
                     <optgroup label="Mesas abiertas">

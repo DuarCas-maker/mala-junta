@@ -31,7 +31,7 @@ const medios: Record<string, string> = {
   transferencia: "Transferencia",
 };
 
-export function CierreCajaPanel({ perfil, onResumenChange }: { perfil: Perfil; onResumenChange?: (resumen: ResumenCaja) => void }) {
+export function CierreCajaPanel({ perfil, onResumenChange, onCierre }: { perfil: Perfil; onResumenChange?: (resumen: ResumenCaja) => void; onCierre?: () => void | Promise<void> }) {
   const [resumen, setResumen] = useState<ResumenCaja | null>(null);
   const [motivos, setMotivos] = useState<Motivo[]>([]);
   const [baseInicial, setBaseInicial] = useState("");
@@ -64,7 +64,18 @@ export function CierreCajaPanel({ perfil, onResumenChange }: { perfil: Perfil; o
   }, [onResumenChange]);
 
   useEffect(() => {
-    cargar();
+    void cargar();
+    const supabase = supabaseBrowser();
+    const canal = supabase.channel("cierre-caja-jornada")
+      .on("postgres_changes", { event: "*", schema: "public", table: "cuentas" }, cargar)
+      .on("postgres_changes", { event: "*", schema: "public", table: "pagos" }, cargar)
+      .on("postgres_changes", { event: "*", schema: "public", table: "cierres_caja" }, cargar)
+      .subscribe();
+    const timer = window.setInterval(cargar, 15000);
+    return () => {
+      window.clearInterval(timer);
+      void supabase.removeChannel(canal);
+    };
   }, [cargar]);
 
   async function abrirCaja(event: FormEvent<HTMLFormElement>) {
@@ -117,10 +128,11 @@ export function CierreCajaPanel({ perfil, onResumenChange }: { perfil: Perfil; o
     });
     if (error) setMensaje(error.message);
     else {
-      setMensaje(`Caja cerrada. Diferencia: ${formatoCOP(data?.diferencia ?? 0)}.`);
+      setMensaje(`Caja cerrada. Las cuentas sin pagar quedan en Pendientes y sus mesas estan disponibles. Diferencia: ${formatoCOP(data?.diferencia ?? 0)}.`);
       setEfectivoContado("");
       setJustificacion("");
       await cargar();
+      await onCierre?.();
     }
     setProcesando(false);
   }
@@ -154,6 +166,7 @@ export function CierreCajaPanel({ perfil, onResumenChange }: { perfil: Perfil; o
           <p className="text-sm font-bold uppercase tracking-wide text-oro">Cierre de Caja</p>
           <h2 className="text-xl font-black text-crema">Turno abierto</h2>
           <p className="text-sm text-antiguo/70">Dia de negocio: {cierre?.dia_negocio}</p>
+          <p className="mt-1 text-xs text-antiguo/65">Al cerrar, las cuentas con saldo pasan a Pendientes y se liberan las mesas. Corte automatico: 10:00 a. m.</p>
         </div>
         <button onClick={cargar} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-sm font-bold">Actualizar</button>
       </div>
