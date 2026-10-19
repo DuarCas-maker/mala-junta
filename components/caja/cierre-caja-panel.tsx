@@ -43,6 +43,7 @@ export function CierreCajaPanel({ perfil, onResumenChange, onCierre }: { perfil:
   const [efectivoContado, setEfectivoContado] = useState("");
   const [justificacion, setJustificacion] = useState("");
   const [mensaje, setMensaje] = useState<string | null>(null);
+  const [errorCarga, setErrorCarga] = useState<string | null>(null);
   const [procesando, setProcesando] = useState(false);
 
   const cargar = useCallback(async () => {
@@ -53,9 +54,10 @@ export function CierreCajaPanel({ perfil, onResumenChange, onCierre }: { perfil:
     ]);
 
     if (error) {
-      setMensaje(error.message);
+      setErrorCarga(error.message);
       return;
     }
+    setErrorCarga(null);
     if (motivosError) setMensaje(motivosError.message);
     const resumenCaja = data as ResumenCaja;
     setResumen(resumenCaja);
@@ -138,7 +140,11 @@ export function CierreCajaPanel({ perfil, onResumenChange, onCierre }: { perfil:
   }
 
   if (!resumen) {
-    return <section className="rounded-lg border border-antiguo/15 bg-espresso p-4 text-sm text-antiguo/70">Cargando cierre de caja...</section>;
+    return (
+      <section className="rounded-lg border border-antiguo/15 bg-espresso p-4 text-sm text-antiguo/70">
+        {errorCarga ? <><p role="alert">No se pudo cargar el cierre de caja: {errorCarga}</p><button onClick={() => void cargar()} className="tap-target mt-3 rounded-md border border-antiguo/20 px-3 font-bold">Reintentar</button></> : "Cargando cierre de caja..."}
+      </section>
+    );
   }
 
   if (resumen.requiere_apertura) {
@@ -147,6 +153,7 @@ export function CierreCajaPanel({ perfil, onResumenChange, onCierre }: { perfil:
         <h2 className="text-xl font-black text-crema">Apertura de caja</h2>
         <p className="mt-1 text-sm text-antiguo/70">Debes registrar base inicial antes de cobrar o registrar retiros.</p>
         {mensaje ? <p className="mt-3 rounded-md border border-antiguo/15 bg-carbon p-3 text-sm">{mensaje}</p> : null}
+        {errorCarga ? <p role="alert" className="mt-3 text-sm">No se pudo actualizar el cierre de caja: {errorCarga}</p> : null}
         <form onSubmit={abrirCaja} className="mt-4 grid gap-2">
           <input value={baseInicial} onChange={(event) => setBaseInicial(event.target.value)} type="number" min="0" inputMode="numeric" placeholder="Base inicial" className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
           <textarea value={notaApertura} onChange={(event) => setNotaApertura(event.target.value)} rows={3} placeholder="Nota de apertura opcional" className="rounded-md border border-antiguo/20 bg-carbon p-3 text-sm text-crema placeholder:text-antiguo/50" />
@@ -172,6 +179,7 @@ export function CierreCajaPanel({ perfil, onResumenChange, onCierre }: { perfil:
       </div>
 
       {mensaje ? <p className="mt-3 rounded-md border border-antiguo/15 bg-carbon p-3 text-sm">{mensaje}</p> : null}
+      {errorCarga ? <p role="alert" className="mt-3 text-sm">No se pudo actualizar el cierre de caja: {errorCarga}</p> : null}
 
       <div className="mt-4 grid gap-3 md:grid-cols-5">
         <div className="rounded-md border border-antiguo/10 bg-carbon p-3">

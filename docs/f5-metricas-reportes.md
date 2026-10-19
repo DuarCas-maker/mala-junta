@@ -84,9 +84,11 @@ ninguna fallo por red; resumen y exportacion rechazaron correctamente la
 peticion sin sesion de administrador. La validacion visual con datos requiere
 iniciar sesion como admin despues de desplegar esta version.
 
-Para las operaciones de escritura de otros modulos, la configuracion CORS de
-Kong debe incluir `Content-Profile` en sus encabezados permitidos. La
-correccion de metricas no cambia el transporte de esas operaciones.
+La conexion general se corrigio posteriormente en el mismo dia: el cliente
+del navegador envia PostgREST por `/api/supabase/rest/...`, que conserva el
+token del usuario, el esquema y el metodo original al contactar el VPS.
+Esto tambien permite las RPC POST que sincronizan jornada o escriben datos.
+Ver `docs/supabase-vps-conexion.md` y `npm run test:conexion`.
 
 ## Criterios F5 cubiertos
 

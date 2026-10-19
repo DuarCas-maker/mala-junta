@@ -1,5 +1,7 @@
 ﻿import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
+import { crearFetchSupabaseMismoOrigen } from "@/lib/supabase-transport";
+
 let browserClient: SupabaseClient | null = null;
 
 const localHosts = new Set(["localhost", "127.0.0.1", "::1"]);
@@ -36,6 +38,9 @@ export function supabaseBrowser() {
 
   if (!browserClient) {
     browserClient = createClient(url, anonKey, {
+      global: typeof window === "undefined" ? undefined : {
+        fetch: crearFetchSupabaseMismoOrigen(url, window.location.origin),
+      },
       auth: {
         persistSession: true,
         autoRefreshToken: true,

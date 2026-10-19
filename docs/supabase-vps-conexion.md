@@ -27,3 +27,30 @@ No se envio `service_role` ni password de Postgres por HTTP o Postgres sin SSL. 
 ## Estado local
 
 `.env.local` queda configurado con URL HTTP y anon key para pruebas de salud, pero sin `SUPABASE_SERVICE_ROLE_KEY` activo hasta tener canal cifrado.
+
+## Actualizacion: 19 de octubre de 2026
+
+La configuracion actual usa `https://supabase-mala-junta.northbridge-finance.com`.
+El servidor responde, pero el CORS de Kong no admite `Content-Profile`, enviado
+por el SDK en las RPC POST. Esto bloquea `cuentas_activas_caja` y
+`resumen_caja_actual` en el navegador. No se deben convertir estas consultas
+a GET: la primera sincroniza la jornada y puede actualizar cuentas.
+
+`lib/supabase-transport.ts` dirige las peticiones PostgREST del navegador al
+mismo origen de la app, bajo `/api/supabase/rest/...`. La ruta Next.js contacta
+exclusivamente el endpoint REST configurado con la clave publica y el mismo
+Bearer del usuario. Conserva metodos, cuerpos, perfiles, filtros y respuestas
+de PostgreSQL/RLS. No usa service role, cookies ni cache, no sigue redirecciones
+y no reintenta escrituras. Auth, Storage y Realtime mantienen su conexion directa.
+
+El cierre de caja muestra un error con boton para reintentar cuando no puede
+cargar, en lugar de permanecer indefinidamente en `Cargando cierre de caja...`.
+
+Validar el transporte, las operaciones de caja y la regresion de metricas:
+
+```bash
+npm run test:conexion
+```
+
+La ruta nueva requiere reconstruir y desplegar el contenedor de Next.js.
+No requiere migraciones SQL ni credenciales nuevas.
