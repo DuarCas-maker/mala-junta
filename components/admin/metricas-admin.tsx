@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -23,6 +23,7 @@ import {
 import { formatoCOP } from "@/lib/format";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { consultasMetricasAdmin, consultaExportarMetricas } from "@/lib/metricas-consultas";
+import { agruparLineasPorDia, ultimos15Dias, totalizarDesglose, cuentasPorEstado, agruparEstadosPorDia, type PuntoDesglose } from "@/lib/metricas-presentacion";
 
 type ResumenMetricas = {
   desde: string;
@@ -76,7 +77,6 @@ type ProductoEstrella = {
   ranking_unidades: number;
   cuadrante: string;
 };
-type PuntoDesglose = { etiqueta: string; ventas: number; margen: number; costo: number; unidades: number };
 type ModoDesglose = "categoria" | "item";
 type Resultado<T> = { data: T; error: string | null };
 type EjeMoneda = { ticks: number[]; domain: [number, number] };
@@ -218,20 +218,6 @@ async function resolver<T>(consulta: PromiseLike<{ data: T | null; error: { mess
   return { data: data ?? fallback, error: error?.message ?? null };
 }
 
-function agruparLineasPorDia(lineas: LineaVenta[], modo: ModoDesglose, valor: string) {
-  const filtradas = valor ? lineas.filter((linea) => (modo === "categoria" ? linea.categoria : linea.item_nombre) === valor) : lineas;
-  const mapa = new Map<string, PuntoDesglose>();
-  filtradas.forEach((linea) => {
-    const actual = mapa.get(linea.dia_negocio) ?? { etiqueta: linea.dia_negocio, ventas: 0, margen: 0, costo: 0, unidades: 0 };
-    actual.ventas += numero(linea.ingreso);
-    actual.margen += numero(linea.margen_estimado);
-    actual.costo += numero(linea.costo_estimado);
-    actual.unidades += numero(linea.cantidad);
-    mapa.set(linea.dia_negocio, actual);
-  });
-  return [...mapa.values()].sort((a, b) => a.etiqueta.localeCompare(b.etiqueta));
-}
-
 function sumarEstado(filas: EstadoCuenta[], segmento: string, campo: keyof EstadoCuenta) {
   return filas.filter((fila) => fila.segmento === segmento).reduce((total, fila) => total + numero(fila[campo]), 0);
 }
@@ -258,8 +244,10 @@ export function MetricasAdminPanel() {
   const [filtroDesglose, setFiltroDesglose] = useState("");
   const [errores, setErrores] = useState<Record<string, string>>({});
   const [cargando, setCargando] = useState(false);
+  const ultimaCarga = useRef(0);
 
   const cargar = useCallback(async () => {
+    const carga = ++ultimaCarga.current;
     setCargando(true);
     setErrores({});
     const supabase = supabaseBrowser();
@@ -299,6 +287,7 @@ export function MetricasAdminPanel() {
       resolver<ConsumoDiaJornada[]>(consultas.consumoDiasJornada, []),
     ]);
 
+    if (carga !== ultimaCarga.current) return;
     if (!resumenRes.error) setResumen(resumenRes.data);
     if (!productosRes.error) setProductos(productosRes.data);
     if (!meserosRes.error) setVentasMesero(meserosRes.data);
@@ -348,8 +337,9 @@ export function MetricasAdminPanel() {
     setFiltroDesglose("");
   }, [modoDesglose]);
 
-  const puntosDesglose = useMemo(() => agruparLineasPorDia(lineasVenta, modoDesglose, filtroDesglose), [lineasVenta, modoDesglose, filtroDesglose]);
-  const totalDesglose = useMemo(() => puntosDesglose.reduce((acc, punto) => ({ ventas: acc.ventas + punto.ventas, margen: acc.margen + punto.margen, unidades: acc.unidades + punto.unidades }), { ventas: 0, margen: 0, unidades: 0 }), [puntosDesglose]);
+  const puntosDesglose = useMemo(() => agruparLineasPorDia(lineasVenta, modoDesglose, filtroDesglose, desde, hasta), [lineasVenta, modoDesglose, filtroDesglose, desde, hasta]);
+  const diasDesglose = useMemo(() => ultimos15Dias(puntosDesglose, desde, hasta), [puntosDesglose, desde, hasta]);
+  const totalDesglose = useMemo(() => totalizarDesglose(puntosDesglose), [puntosDesglose]);
 
   const datosEstado = useMemo(() => {
     const orden = ["cobradas", "pagada_parcial", "por_cobrar", "pendiente", "abiertas"];
@@ -368,17 +358,7 @@ export function MetricasAdminPanel() {
     faltante: sumarEstado(estados, "pagada_parcial", "faltante"),
   }], [estados]);
 
-  const estadoDiaGrafica = useMemo(() => {
-    const mapa = new Map<string, Record<string, string | number>>();
-    estadosDia.forEach((fila) => {
-      const actual = mapa.get(fila.dia_negocio) ?? { dia: fila.dia_negocio, etiqueta: fechaCorta(fila.dia_negocio) };
-      const valor = fila.segmento === "cobradas" ? numero(fila.pagado) : numero(fila.venta_bruta);
-      actual[fila.segmento] = numero(actual[fila.segmento]) + valor;
-      actual.total = numero(actual.total) + valor;
-      mapa.set(fila.dia_negocio, actual);
-    });
-    return [...mapa.values()].sort((a, b) => String(a.dia).localeCompare(String(b.dia)));
-  }, [estadosDia]);
+  const estadoDiaGrafica = useMemo<Record<string, string | number>[]>(() => agruparEstadosPorDia(estadosDia).map((fila) => ({ ...fila, etiqueta: fechaCorta(String(fila.dia)) })), [estadosDia]);
 
   const ejeVentasIngresos = useMemo(() => {
     const maximoVentas = estadoDiaGrafica.reduce((maximo, fila) => Math.max(maximo, numero(fila.total)), 0);
@@ -455,9 +435,9 @@ export function MetricasAdminPanel() {
           <button onClick={aplicarUltimos30} className="tap-target rounded-md border border-antiguo/20 px-3 text-sm font-bold">30 dias</button>
           <button onClick={aplicarSemana} className="tap-target rounded-md border border-antiguo/20 px-3 text-sm font-bold">Semana</button>
           <button onClick={aplicarMes} className="tap-target rounded-md border border-antiguo/20 px-3 text-sm font-bold">Mes</button>
-          <input type="date" value={desde} onChange={(event) => setDesde(event.target.value)} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
+          <input aria-label="Fecha desde" type="date" value={desde} onChange={(event) => setDesde(event.target.value)} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
           <div className="grid gap-2 sm:grid-cols-[150px_auto]">
-            <input type="date" value={hasta} onChange={(event) => setHasta(event.target.value)} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
+            <input aria-label="Fecha hasta" type="date" value={hasta} onChange={(event) => setHasta(event.target.value)} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
             <button onClick={() => void cargar()} disabled={cargando} className="tap-target rounded-md bg-oro px-4 font-black text-carbon disabled:opacity-50">{cargando ? "Cargando" : "Actualizar"}</button>
           </div>
         </div>
@@ -470,16 +450,29 @@ export function MetricasAdminPanel() {
         </div>
       ) : null}
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-        <Kpi titulo="Ventas brutas" valor={formatoCOP(resumen?.ventas)} />
-        <Kpi titulo="Cobradas" valor={formatoCOP(resumen?.cobradas)} detalle={`Pagadas ${formatoCOP(resumen?.cobradas_pagadas)} / Cerradas ${formatoCOP(resumen?.cobradas_cerradas)}`} destacado />
-        <Kpi titulo="Ganancia" valor={formatoCOP(resumen?.margen_estimado)} detalle={`${resumen?.margen_pct ?? 0}%`} destacado />
-        <Kpi titulo="Parcial" valor={formatoCOP(resumen?.parcial_pagado)} detalle={`Falta ${formatoCOP(resumen?.parcial_faltante)}`} />
-        <Kpi titulo="Por cobrar" valor={formatoCOP(resumen?.por_cobrar)} />
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Kpi titulo="Ventas brutas" valor={formatoCOP(resumen?.ventas)} cuentas={cuentasPorEstado(estados)} />
+        <Kpi titulo="Cobradas" valor={formatoCOP(resumen?.cobradas)} cuentas={cuentasPorEstado(estados, "cobradas")} detalle={`Pagadas ${formatoCOP(resumen?.cobradas_pagadas)} / Cerradas ${formatoCOP(resumen?.cobradas_cerradas)}`} destacado />
+        <Kpi titulo="Ganancia" valor={formatoCOP(resumen?.margen_estimado)} cuentas={cuentasPorEstado(estados)} detalle={`${resumen?.margen_pct ?? 0}%`} destacado />
+        <Kpi titulo="Parcial" valor={formatoCOP(resumen?.parcial_pagado)} cuentas={cuentasPorEstado(estados, "pagada_parcial")} detalle={`Falta ${formatoCOP(resumen?.parcial_faltante)}`} />
+        <Kpi titulo="Por cobrar" valor={formatoCOP(resumen?.por_cobrar)} cuentas={cuentasPorEstado(estados, "por_cobrar")} />
+        <Kpi titulo="Pendientes" valor={formatoCOP(resumen?.pendientes)} cuentas={cuentasPorEstado(estados, "pendiente")} />
+        <Kpi titulo="Abiertas" valor={formatoCOP(resumen?.abiertas)} cuentas={cuentasPorEstado(estados, "abiertas")} />
         <Kpi titulo="Anulado" valor={formatoCOP(resumen?.anulado)} detalle={`${resumen?.pedidos_anulados ?? 0} pedidos`} />
       </div>
 
-      <PanelGrafica titulo="Ventas por jornada laboral" subtitulo="Segmentadas por estado financiero de la cuenta.">
+      <PanelGrafica titulo="Ventas por jornada laboral" subtitulo="Monto y cantidad de cuentas por estado. Pasa sobre una jornada para ver su detalle." pie={
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+          {["cobradas", "pagada_parcial", "por_cobrar", "pendiente", "abiertas"].map((segmento) => {
+            const estado = datosEstado.find((fila) => fila.segmento === segmento);
+            return <div key={segmento} className="rounded-md border border-antiguo/10 p-2 text-xs">
+              <p style={{ color: coloresEstado[segmento] }}>{etiquetaSegmento(segmento)}</p>
+              <p className="mt-1 font-bold text-crema">{formatoCOP(estado?.valor ?? 0)}</p>
+              <p className="text-antiguo/70">{textoCuentas(estado?.cuentas ?? 0)} en el intervalo</p>
+            </div>;
+          })}
+        </div>
+      }>
         <GraficaEstadoDia datos={estadoDiaGrafica} eje={ejeVentasIngresos} />
       </PanelGrafica>
 
@@ -491,26 +484,37 @@ export function MetricasAdminPanel() {
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <h3 className="font-black text-crema">Detalle por {modoDesglose === "categoria" ? "categoria" : "item"}</h3>
-            <p className="text-sm text-antiguo/60">Filtra ventas y ganancias de un producto, combo o categoria.</p>
+            <p className="text-sm text-antiguo/60">Ultimos 15 dias del intervalo: {diasDesglose.length ? `${fechaCorta(diasDesglose[0].etiqueta)} al ${fechaCorta(diasDesglose[diasDesglose.length - 1].etiqueta)}` : "selecciona un rango valido"}. La fecha mas reciente aparece a la derecha.</p>
           </div>
           <div className="grid gap-2 sm:grid-cols-[150px_minmax(180px,280px)]">
-            <select value={modoDesglose} onChange={(event) => setModoDesglose(event.target.value as ModoDesglose)} className="tap-target rounded-md border border-antiguo/20 bg-espresso px-3 text-crema">
+            <select aria-label="Tipo de desglose" value={modoDesglose} onChange={(event) => setModoDesglose(event.target.value as ModoDesglose)} className="tap-target rounded-md border border-antiguo/20 bg-espresso px-3 text-crema">
               <option value="categoria">Categoria</option>
               <option value="item">Item</option>
             </select>
-            <select value={filtroDesglose} onChange={(event) => setFiltroDesglose(event.target.value)} className="tap-target rounded-md border border-antiguo/20 bg-espresso px-3 text-crema">
+            <select aria-label="Categoria o item" value={filtroDesglose} onChange={(event) => setFiltroDesglose(event.target.value)} className="tap-target rounded-md border border-antiguo/20 bg-espresso px-3 text-crema">
               <option value="">Todas</option>
               {opcionesDesglose.map((opcion) => <option key={opcion} value={opcion}>{opcion}</option>)}
             </select>
           </div>
         </div>
-        <div className="mt-3 grid gap-3 sm:grid-cols-3">
+        <div className="mt-4 overflow-x-auto">
+          <div className="h-[300px] min-w-[780px]">
+            <GraficaDesglose datos={diasDesglose} />
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-md border border-antiguo/10 bg-carbon p-3">
+        <h3 className="font-black text-crema">Total del intervalo por {modoDesglose === "categoria" ? "categoria" : "item"}</h3>
+        <p className="text-sm text-antiguo/60">{desde} al {hasta} · {filtroDesglose || "Todas"}. Incluye todo el intervalo y usa el mismo filtro del detalle diario.</p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <Kpi titulo="Ventas filtro" valor={formatoCOP(totalDesglose.ventas)} />
+          <Kpi titulo="Costo filtro" valor={formatoCOP(totalDesglose.costo)} />
           <Kpi titulo="Ganancia filtro" valor={formatoCOP(totalDesglose.margen)} destacado />
           <Kpi titulo="Unidades" valor={totalDesglose.unidades.toLocaleString("es-CO")} />
         </div>
-        <div className="mt-4 h-[260px]">
-          <GraficaDesglose datos={puntosDesglose} />
+        <div className="mt-4 h-[210px]">
+          <GraficaTotalDesglose total={totalDesglose} />
         </div>
       </section>
 
@@ -575,22 +579,28 @@ export function MetricasAdminPanel() {
   );
 }
 
-function Kpi({ titulo, valor, detalle, destacado = false }: { titulo: string; valor: string | number; detalle?: string; destacado?: boolean }) {
+function textoCuentas(cantidad: number) {
+  return `${cantidad.toLocaleString("es-CO")} ${cantidad === 1 ? "cuenta" : "cuentas"}`;
+}
+
+function Kpi({ titulo, valor, detalle, cuentas, destacado = false }: { titulo: string; valor: string | number; detalle?: string; cuentas?: number; destacado?: boolean }) {
   return (
     <div className={destacado ? "rounded-md border border-oro/20 bg-carbon p-3" : "rounded-md border border-antiguo/10 bg-carbon p-3"}>
       <p className="text-xs text-antiguo/60">{titulo}</p>
       <p className={destacado ? "break-words text-xl font-black leading-tight text-dorado" : "break-words text-xl font-black leading-tight text-crema"}>{valor}</p>
+      {cuentas !== undefined ? <p className="mt-1 text-sm font-bold text-crema/85">Cantidad: {textoCuentas(cuentas)}</p> : null}
       {detalle ? <p className="text-xs text-antiguo/55">{detalle}</p> : null}
     </div>
   );
 }
 
-function PanelGrafica({ titulo, subtitulo, children }: { titulo: string; subtitulo: string; children: React.ReactNode }) {
+function PanelGrafica({ titulo, subtitulo, children, pie }: { titulo: string; subtitulo: string; children: React.ReactNode; pie?: React.ReactNode }) {
   return (
     <section className="rounded-md border border-antiguo/10 bg-carbon p-3">
       <h3 className="font-black text-crema">{titulo}</h3>
       <p className="text-sm text-antiguo/60">{subtitulo}</p>
       <div className="mt-3 h-[310px]">{children}</div>
+      {pie}
     </section>
   );
 }
@@ -603,6 +613,22 @@ function TooltipMoneda({ active, payload, label }: any) {
       {payload.map((item: any) => (
         <p key={item.dataKey} style={{ color: item.color }}>{item.name}: {formatoCOP(item.value)}</p>
       ))}
+    </div>
+  );
+}
+
+function TooltipEstadoDia({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null;
+  const punto = payload[0].payload;
+  return (
+    <div className="rounded-md border border-antiguo/20 bg-carbon p-3 text-xs text-crema shadow-suave">
+      <p className="font-bold">Jornada {label}</p>
+      {["cobradas", "pagada_parcial", "por_cobrar", "pendiente", "abiertas"].map((segmento) => (
+        <p key={segmento} className="mt-1" style={{ color: coloresEstado[segmento] }}>
+          {etiquetaSegmento(segmento)}: {formatoCOP(punto[segmento])} · Cantidad: {textoCuentas(numero(punto[`cuentas_${segmento}`]))}
+        </p>
+      ))}
+      <p className="mt-2 border-t border-antiguo/20 pt-2 font-bold">Total: {formatoCOP(punto.total)} · {textoCuentas(numero(punto.cuentas_total))}</p>
     </div>
   );
 }
@@ -798,7 +824,7 @@ function GraficaEstadoDia({ datos, eje }: { datos: Record<string, string | numbe
         <CartesianGrid stroke="rgba(224,209,190,0.12)" vertical={false} />
         <XAxis dataKey="etiqueta" tick={{ fill: "#bda88f", fontSize: 11 }} tickLine={false} axisLine={false} />
         <YAxis domain={eje.domain} ticks={eje.ticks} tickFormatter={monedaEje} tick={{ fill: "#bda88f", fontSize: 11 }} tickLine={false} axisLine={false} width={64} />
-        <Tooltip content={<TooltipMoneda />} />
+        <Tooltip content={<TooltipEstadoDia />} />
         <Legend wrapperStyle={{ color: "#e0d1be", fontSize: 12 }} />
         <Bar dataKey="cobradas" name="Cobradas" stackId="ventas" fill={coloresEstado.cobradas}>
           {mostrarLabels ? <LabelList dataKey="cobradas" formatter={monedaCorta} fill="#120d0a" fontSize={10} /> : null}
@@ -857,19 +883,41 @@ function GraficaDesglose({ datos }: { datos: PuntoDesglose[] }) {
     <ResponsiveContainer width="100%" height="100%">
       <BarChart data={normalizados} margin={{ top: 28, right: 16, left: 0, bottom: 0 }}>
         <CartesianGrid stroke="rgba(224,209,190,0.12)" vertical={false} />
-        <XAxis dataKey="etiquetaCorta" tick={{ fill: "#bda88f", fontSize: 11 }} tickLine={false} axisLine={false} />
-        <YAxis tickFormatter={(value) => `$${Math.round(Number(value) / 1000)}k`} tick={{ fill: "#bda88f", fontSize: 11 }} tickLine={false} axisLine={false} width={58} />
+        <XAxis dataKey="etiquetaCorta" interval={0} tick={{ fill: "#bda88f", fontSize: 10 }} tickLine={false} axisLine={false} />
+        <YAxis tickFormatter={monedaEje} tick={{ fill: "#bda88f", fontSize: 11 }} tickLine={false} axisLine={false} width={64} />
         <Tooltip content={<TooltipMoneda />} />
         <Legend wrapperStyle={{ color: "#e0d1be", fontSize: 12 }} />
         <Bar dataKey="ventas" name="Ventas" fill="#e2b07f" radius={[3, 3, 0, 0]}>
           <LabelList dataKey="ventas" position="top" formatter={monedaCorta} fill="#e0d1be" fontSize={10} />
         </Bar>
         <Bar dataKey="costo" name="Costo" fill="#ff8b8b" radius={[3, 3, 0, 0]}>
-          <LabelList dataKey="costo" position="top" formatter={monedaCorta} fill="#e0d1be" fontSize={10} />
+          {conEspacioParaEtiquetas(datos.length, 2) ? <LabelList dataKey="costo" position="top" formatter={monedaCorta} fill="#e0d1be" fontSize={10} /> : null}
         </Bar>
         <Bar dataKey="margen" name="Ganancia" fill="#58d68d" radius={[3, 3, 0, 0]}>
-          <LabelList dataKey="margen" position="top" formatter={monedaCorta} fill="#e0d1be" fontSize={10} />
+          {conEspacioParaEtiquetas(datos.length, 2) ? <LabelList dataKey="margen" position="top" formatter={monedaCorta} fill="#e0d1be" fontSize={10} /> : null}
         </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+function GraficaTotalDesglose({ total }: { total: ReturnType<typeof totalizarDesglose> }) {
+  if (!total.unidades && !total.ventas && !total.costo) return <Vacio texto="Sin ventas para este filtro en el intervalo." />;
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <BarChart layout="vertical" data={[{ ...total, etiqueta: "Intervalo" }]} stackOffset="sign" margin={{ top: 28, right: 30, left: 0, bottom: 4 }}>
+        <CartesianGrid stroke="rgba(224,209,190,0.12)" horizontal={false} />
+        <XAxis type="number" tickFormatter={monedaEje} tick={{ fill: "#bda88f", fontSize: 11 }} tickLine={false} axisLine={false} />
+        <YAxis type="category" dataKey="etiqueta" width={66} tick={{ fill: "#bda88f", fontSize: 11 }} tickLine={false} axisLine={false} />
+        <Tooltip content={<TooltipMoneda />} />
+        <Legend wrapperStyle={{ color: "#e0d1be", fontSize: 12 }} />
+        <Bar dataKey="costo" name="Costo" stackId="total" fill="#ff8b8b" maxBarSize={70}>
+          <LabelList dataKey="costo" position="center" formatter={monedaCorta} fill="#120d0a" fontSize={12} fontWeight={700} />
+        </Bar>
+        <Bar dataKey="margen" name="Ganancia" stackId="total" fill="#58d68d" maxBarSize={70}>
+          <LabelList dataKey="margen" position="center" formatter={monedaCorta} fill="#120d0a" fontSize={12} fontWeight={700} />
+        </Bar>
+        <ReferenceLine x={total.ventas} stroke="#e2b07f" strokeWidth={2} label={{ value: `Ventas ${formatoCOP(total.ventas)}`, position: "insideTopRight", fill: "#e2b07f", fontSize: 12 }} />
       </BarChart>
     </ResponsiveContainer>
   );

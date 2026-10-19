@@ -18,7 +18,7 @@
         "test:sql:f9": "supabase test db --local tests/rls/f9_pendientes_jornada.sql",
         "test:jornada": "node --experimental-strip-types --test tests/jornada.test.mjs tests/corte-jornada.test.mjs",
         "test:db:jornada": "node tests/db-jornada.mjs",
-        "test:metricas": "node --experimental-strip-types --test tests/metricas-conexion.test.mjs",
+        "test:metricas": "node --experimental-strip-types --test tests/metricas-conexion.test.mjs tests/metricas-presentacion.test.mjs",
         "test:conexion": "node --experimental-strip-types --test tests/supabase-transport.test.mjs tests/metricas-conexion.test.mjs"
     },
     "dependencies": {

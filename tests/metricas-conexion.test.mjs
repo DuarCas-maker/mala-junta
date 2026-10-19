@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createClient } from "@supabase/supabase-js";
-import { consultasMetricasAdmin, consultaExportarMetricas } from "../lib/metricas-consultas.ts";
+import { consultasMetricasAdmin, consultaExportarMetricas, cargarLineasMetricas } from "../lib/metricas-consultas.ts";
 
 // Reproduce los encabezados permitidos por Kong en el VPS. El navegador
 // rechaza Content-Profile antes de enviar una RPC POST, aunque el servidor funcione.
@@ -56,8 +56,33 @@ test("los 15 bloques cargan con el CORS del VPS y conservan la sesion, fechas y 
     assert.equal(porRpc(rpc).get("limit"), "40");
   }
   assert.equal(porRpc("metricas_rotacion_stock_admin").get("limit"), "12");
-  assert.equal(porRpc("metricas_lineas_venta_admin").get("limit"), "2000");
+  assert.equal(porRpc("metricas_lineas_venta_admin").get("limit"), "500");
+  assert.equal(porRpc("metricas_lineas_venta_admin").get("order"), "dia_negocio.desc,pedido_item_id.desc");
   assert.equal(porRpc("metricas_lineas_venta_admin").get("anulado"), "eq.false");
+});
+
+test("el detalle incluye mas de 2000 lineas y todas las paginas del intervalo", async () => {
+  const filas = Array.from({ length: 2301 }, (_, id) => ({ pedido_item_id: String(id), ingreso: id + 1 }));
+  const { cliente, peticiones } = clienteConCors(({ url }) => {
+    assert.equal(url.searchParams.get("p_desde"), "2026-08-01");
+    assert.equal(url.searchParams.get("p_hasta"), "2026-10-19");
+    const offset = Number(url.searchParams.get("offset"));
+    const limit = Number(url.searchParams.get("limit"));
+    return Response.json(filas.slice(offset, offset + limit));
+  });
+  const { data, error } = await cargarLineasMetricas(cliente, "2026-08-01", "2026-10-19");
+  assert.equal(error, null);
+  assert.deepEqual(data, filas);
+  assert.deepEqual(peticiones.map(({ url }) => Number(url.searchParams.get("offset"))), [0, 500, 1000, 1500, 2000]);
+});
+
+test("una pagina fallida no presenta un total parcial como si fuera completo", async () => {
+  const { cliente } = clienteConCors(({ url }) => Number(url.searchParams.get("offset")) === 0
+    ? Response.json(Array.from({ length: 500 }, () => ({ ingreso: 1000 })))
+    : Response.json({ code: "42501", message: "sin_permiso" }, { status: 403 }));
+  const { data, error } = await cargarLineasMetricas(cliente, "2026-08-01", "2026-10-19");
+  assert.equal(data, null);
+  assert.equal(error.code, "42501");
 });
 
 test("la exportacion SQL funciona con el mismo CORS y devuelve el CSV", async () => {

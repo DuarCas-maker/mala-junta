@@ -90,6 +90,35 @@ token del usuario, el esquema y el metodo original al contactar el VPS.
 Esto tambien permite las RPC POST que sincronizan jornada o escriben datos.
 Ver `docs/supabase-vps-conexion.md` y `npm run test:conexion`.
 
+## Montos, cuentas y detalle del intervalo
+
+Las tarjetas y el detalle de ventas por jornada muestran los montos junto con
+la cantidad de cuentas. El conteo del intervalo usa `metricas_estado_cuentas_admin`,
+no la suma de conteos diarios, para evitar contar dos veces una cuenta con ventas
+en varias jornadas. Pendientes y Abiertas tienen su propia tarjeta; Parcial conserva
+el monto abonado y el faltante en el mismo recuadro. Los conteos de Anulado siguen
+expresados como pedidos, tal como en el reporte original.
+
+El detalle por categoria/item muestra los ultimos 15 dias calendario del rango
+general, incluidos los dias sin ventas. Se ordenan de izquierda a derecha y
+terminan en la fecha Hasta. Debajo, una unica barra horizontal totaliza todo
+el intervalo con los mismos filtros: costo y ganancia forman la pila y las
+ventas se muestran como total, evitando sumar ventas dos veces.
+
+Las lineas se cargan en paginas de 500, con orden estable por jornada e ID de
+item, en lugar de cortar la respuesta a 2000 filas. Los totales y las opciones
+de categoria/item usan todas las paginas. Si una pagina falla, se informa el
+error y no se entrega un total parcial como resultado completo.
+
+```bash
+npm run test:metricas
+```
+
+Las pruebas cubren rangos largos, cambios de categoria/item, el cierre inclusivo
+del rango (del 5 al 19 de octubre, por ejemplo), fechas historicas, dias sin ventas,
+conteos por estado y margenes negativos. La revision visual local usa datos
+simulados; no requiere modificar datos de produccion.
+
 ## Criterios F5 cubiertos
 
 - M-01/M-03: margen por producto y combo con costo unitario actual.

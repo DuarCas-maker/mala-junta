@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { LineaDesglose } from "./metricas-presentacion";
 
 // Todas estas RPC son STABLE y solo leen datos. GET usa Accept-Profile,
 // permitido por el CORS del VPS, en vez de Content-Profile de POST.
@@ -14,7 +15,7 @@ export function consultasMetricasAdmin(supabase: SupabaseClient, desde: string, 
     rotacion: supabase.rpc("metricas_rotacion_stock_admin", {}, lectura).limit(12),
     tiempos: supabase.rpc("metricas_tiempos_preparacion_admin", args, lectura).limit(40),
     dias: supabase.rpc("metricas_margen_global_dia_admin", args, lectura),
-    lineas: supabase.rpc("metricas_lineas_venta_admin", args, lectura).eq("anulado", false).limit(2000),
+    lineas: cargarLineasMetricas(supabase, desde, hasta),
     estados: supabase.rpc("metricas_estado_cuentas_admin", args, lectura),
     estadosDia: supabase.rpc("metricas_estado_dia_admin", args, lectura),
     anulados: supabase.rpc("metricas_anulados_admin", args, lectura),
@@ -23,6 +24,24 @@ export function consultasMetricasAdmin(supabase: SupabaseClient, desde: string, 
     consumoHoras: supabase.rpc("metricas_consumo_horas_admin", args, lectura),
     consumoDiasJornada: supabase.rpc("metricas_consumo_dias_jornada_admin", args, lectura),
   };
+}
+
+// PostgREST limita cada respuesta. Paginar evita que un rango largo pierda
+// sus ultimas jornadas y permite totalizar todo el intervalo seleccionado.
+export async function cargarLineasMetricas(supabase: SupabaseClient, desde: string, hasta: string) {
+  const filas: LineaDesglose[] = [];
+  const tamano = 500;
+  let offset = 0;
+  while (true) {
+    const { data, error } = await supabase.rpc("metricas_lineas_venta_admin", { p_desde: desde, p_hasta: hasta }, { get: true })
+      .eq("anulado", false).order("dia_negocio", { ascending: false }).order("pedido_item_id", { ascending: false })
+      .range(offset, offset + tamano - 1);
+    if (error) return { data: null, error };
+    const pagina = (data ?? []) as LineaDesglose[];
+    filas.push(...pagina);
+    if (pagina.length < tamano) return { data: filas, error: null };
+    offset += pagina.length;
+  }
 }
 
 export function consultaExportarMetricas(supabase: SupabaseClient, reporte: string, desde: string, hasta: string) {
