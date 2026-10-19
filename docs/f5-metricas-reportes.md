@@ -58,6 +58,36 @@ select * from public.v_metricas_tiempos_preparacion limit 10;
 supabase test db --local tests/rls/f5.sql
 ```
 
+## Conexion del navegador al VPS
+
+El 19 de octubre de 2026 se comprobo que Supabase responde por HTTPS,
+pero el preflight CORS de Kong no permite `Content-Profile`. El SDK lo
+envia en las RPC POST, por lo que el navegador muestra `TypeError: Failed
+to fetch` antes de consultar la base de datos. `Accept-Profile` si esta permitido.
+
+Las consultas de los 15 bloques y la exportacion SQL se centralizan en
+`lib/metricas-consultas.ts` y usan `rpc(..., { get: true })`. Estas funciones
+son `STABLE` y solo leen datos. Se conservan la sesion del usuario, las
+validaciones de administrador, el esquema `public`, las fechas, los filtros
+y los limites. No requiere migraciones ni credenciales nuevas.
+
+Prueba de regresion con el SDK instalado y los encabezados CORS del VPS:
+
+```bash
+npm run test:metricas
+```
+
+La prueba reproduce primero el fallo con POST y verifica luego los 15 bloques,
+la exportacion y los errores de permisos con GET. Contra la API real se
+comprobo el preflight y la respuesta de las 16 consultas con la clave publica:
+ninguna fallo por red; resumen y exportacion rechazaron correctamente la
+peticion sin sesion de administrador. La validacion visual con datos requiere
+iniciar sesion como admin despues de desplegar esta version.
+
+Para las operaciones de escritura de otros modulos, la configuracion CORS de
+Kong debe incluir `Content-Profile` en sus encabezados permitidos. La
+correccion de metricas no cambia el transporte de esas operaciones.
+
 ## Criterios F5 cubiertos
 
 - M-01/M-03: margen por producto y combo con costo unitario actual.

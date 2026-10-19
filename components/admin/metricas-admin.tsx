@@ -22,6 +22,7 @@ import {
 } from "recharts";
 import { formatoCOP } from "@/lib/format";
 import { supabaseBrowser } from "@/lib/supabase-browser";
+import { consultasMetricasAdmin, consultaExportarMetricas } from "@/lib/metricas-consultas";
 
 type ResumenMetricas = {
   desde: string;
@@ -262,7 +263,7 @@ export function MetricasAdminPanel() {
     setCargando(true);
     setErrores({});
     const supabase = supabaseBrowser();
-    const args = { p_desde: desde, p_hasta: hasta };
+    const consultas = consultasMetricasAdmin(supabase, desde, hasta);
 
     const [
       resumenRes,
@@ -281,21 +282,21 @@ export function MetricasAdminPanel() {
       consumoHorasRes,
       consumoDiasJornadaRes,
     ] = await Promise.all([
-      resolver<ResumenMetricas>(supabase.rpc("resumen_metricas_admin", args), null as unknown as ResumenMetricas),
-      resolver<ProductoMargen[]>(supabase.rpc("metricas_margen_producto_admin", args), []),
-      resolver<VentaMesero[]>(supabase.rpc("metricas_ventas_mesero_admin", args).limit(40), []),
-      resolver<CierreCaja[]>(supabase.rpc("metricas_cierres_caja_admin", args).limit(40), []),
-      resolver<Rotacion[]>(supabase.rpc("metricas_rotacion_stock_admin").limit(12), []),
-      resolver<TiempoPrep[]>(supabase.rpc("metricas_tiempos_preparacion_admin", args).limit(40), []),
-      resolver<DiaMargen[]>(supabase.rpc("metricas_margen_global_dia_admin", args), []),
-      resolver<LineaVenta[]>(supabase.rpc("metricas_lineas_venta_admin", args).eq("anulado", false).limit(2000), []),
-      resolver<EstadoCuenta[]>(supabase.rpc("metricas_estado_cuentas_admin", args), []),
-      resolver<EstadoDia[]>(supabase.rpc("metricas_estado_dia_admin", args), []),
-      resolver<AnuladoDia[]>(supabase.rpc("metricas_anulados_admin", args), []),
-      resolver<ProductoEstrella[]>(supabase.rpc("metricas_productos_estrella_admin", args), []),
-      resolver<IngresoMedioPago[]>(supabase.rpc("metricas_ingresos_medios_pago_admin", args), []),
-      resolver<ConsumoHora[]>(supabase.rpc("metricas_consumo_horas_admin", args), []),
-      resolver<ConsumoDiaJornada[]>(supabase.rpc("metricas_consumo_dias_jornada_admin", args), []),
+      resolver<ResumenMetricas>(consultas.resumen, null as unknown as ResumenMetricas),
+      resolver<ProductoMargen[]>(consultas.productos, []),
+      resolver<VentaMesero[]>(consultas.meseros, []),
+      resolver<CierreCaja[]>(consultas.cierres, []),
+      resolver<Rotacion[]>(consultas.rotacion, []),
+      resolver<TiempoPrep[]>(consultas.tiempos, []),
+      resolver<DiaMargen[]>(consultas.dias, []),
+      resolver<LineaVenta[]>(consultas.lineas, []),
+      resolver<EstadoCuenta[]>(consultas.estados, []),
+      resolver<EstadoDia[]>(consultas.estadosDia, []),
+      resolver<AnuladoDia[]>(consultas.anulados, []),
+      resolver<ProductoEstrella[]>(consultas.estrellas, []),
+      resolver<IngresoMedioPago[]>(consultas.ingresosMedio, []),
+      resolver<ConsumoHora[]>(consultas.consumoHoras, []),
+      resolver<ConsumoDiaJornada[]>(consultas.consumoDiasJornada, []),
     ]);
 
     if (!resumenRes.error) setResumen(resumenRes.data);
@@ -411,7 +412,7 @@ export function MetricasAdminPanel() {
 
   async function exportarSql(reporte: string) {
     const supabase = supabaseBrowser();
-    const { data, error } = await supabase.rpc("exportar_metricas_csv", { p_reporte: reporte, p_desde: desde, p_hasta: hasta });
+    const { data, error } = await consultaExportarMetricas(supabase, reporte, desde, hasta);
     if (error) {
       setErrores((actual) => ({ ...actual, exportar: error.message }));
       return;
