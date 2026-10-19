@@ -1,21 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { agruparLineasPorDia, ultimos15Dias, totalizarDesglose, cuentasPorEstado, agruparEstadosPorDia } from "../lib/metricas-presentacion.ts";
+import { agruparLineasPorDia, ultimas15JornadasConRegistros, totalizarDesglose, cuentasPorEstado, agruparEstadosPorDia } from "../lib/metricas-presentacion.ts";
 
 const linea = (dia, ingreso, categoria = "Cervezas", extras = {}) => ({
   dia_negocio: dia, ingreso, categoria, item_nombre: "Aguila", cantidad: 1,
   costo_estimado: ingreso * 0.4, margen_estimado: ingreso * 0.6, ...extras,
 });
 
-test("al 19 de octubre muestra del 5 al 19 inclusive y conserva dias sin ventas", () => {
+test("omite dias vacios y conserva las jornadas con registros aunque sean anteriores a los ultimos 15 dias calendario", () => {
   const puntos = agruparLineasPorDia([linea("2026-08-01", 100), linea("2026-10-18", 200), linea("2026-10-19", 300)], "categoria", "", "2026-08-01", "2026-10-19");
-  const diarios = ultimos15Dias(puntos, "2026-08-01", "2026-10-19");
-  assert.equal(diarios.length, 15);
-  assert.equal(diarios[0].etiqueta, "2026-10-05");
-  assert.equal(diarios[13].etiqueta, "2026-10-18");
-  assert.equal(diarios[14].etiqueta, "2026-10-19");
-  assert.equal(diarios[0].ventas, 0);
-  assert.equal(totalizarDesglose(diarios).ventas, 500);
+  const diarios = ultimas15JornadasConRegistros(puntos, "2026-08-01", "2026-10-19");
+  assert.deepEqual(diarios.map(({ etiqueta }) => etiqueta), ["2026-08-01", "2026-10-18", "2026-10-19"]);
+  assert.equal(totalizarDesglose(diarios).ventas, 600);
   assert.deepEqual(totalizarDesglose(puntos), { ventas: 600, costo: 240, margen: 360, unidades: 3 });
 });
 
@@ -26,13 +22,28 @@ test("categoria, item y rango general filtran los totales y el detalle diario ju
   assert.equal(totalizarDesglose(agruparLineasPorDia(filas, "categoria", "", "2026-08-01", "2026-10-19")).ventas, 300);
 });
 
-test("rangos cortos e historicos terminan en la fecha seleccionada", () => {
-  assert.deepEqual(ultimos15Dias([], "2026-08-01", "2026-08-03").map(({ etiqueta }) => etiqueta), ["2026-08-01", "2026-08-02", "2026-08-03"]);
-  const cruce = ultimos15Dias([], "2025-12-01", "2026-01-05");
-  assert.equal(cruce[0].etiqueta, "2025-12-22");
-  assert.equal(cruce[14].etiqueta, "2026-01-05");
-  assert.deepEqual(ultimos15Dias([], "2026-10-20", "2026-10-19"), []);
-  assert.deepEqual(ultimos15Dias([], "", ""), []);
+test("selecciona las 15 jornadas mas recientes en orden cronologico sin recortar los totales del intervalo", () => {
+  const filas = Array.from({ length: 20 }, (_, i) => linea(`2026-09-${String(i + 1).padStart(2, "0")}`, 100));
+  const puntos = agruparLineasPorDia(filas, "categoria", "", "2026-09-01", "2026-10-19");
+  const copia = [...puntos];
+  const recientes = ultimas15JornadasConRegistros([...puntos].reverse(), "2026-09-01", "2026-10-19");
+  assert.equal(recientes.length, 15);
+  assert.equal(recientes[0].etiqueta, "2026-09-06");
+  assert.equal(recientes[14].etiqueta, "2026-09-20");
+  assert.equal(totalizarDesglose(recientes).ventas, 1500);
+  assert.equal(totalizarDesglose(puntos).ventas, 2000);
+  assert.deepEqual(puntos, copia);
+  assert.deepEqual(ultimas15JornadasConRegistros(puntos, "2026-10-01", "2026-10-19"), []);
+  assert.deepEqual(ultimas15JornadasConRegistros(puntos, "2026-10-20", "2026-10-19"), []);
+  assert.deepEqual(ultimas15JornadasConRegistros(puntos, "", ""), []);
+});
+
+test("las jornadas activas dependen del filtro de categoria y mantienen la suma diaria costo mas ganancia", () => {
+  const filas = [linea("2026-09-21", 100), linea("2026-09-30", 200), linea("2026-10-16", 300, "Cocteles")];
+  const puntos = agruparLineasPorDia(filas, "categoria", "Cervezas", "2026-09-01", "2026-10-19");
+  const recientes = ultimas15JornadasConRegistros(puntos, "2026-09-01", "2026-10-19");
+  assert.deepEqual(recientes.map(({ etiqueta }) => etiqueta), ["2026-09-21", "2026-09-30"]);
+  for (const punto of puntos) assert.equal(punto.costo + punto.margen, punto.ventas);
 });
 
 test("las cuentas cobradas suman pagadas y cerradas y los pendientes conservan su conteo", () => {

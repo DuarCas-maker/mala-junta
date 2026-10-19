@@ -99,11 +99,15 @@ en varias jornadas. Pendientes y Abiertas tienen su propia tarjeta; Parcial cons
 el monto abonado y el faltante en el mismo recuadro. Los conteos de Anulado siguen
 expresados como pedidos, tal como en el reporte original.
 
-El detalle por categoria/item muestra los ultimos 15 dias calendario del rango
-general, incluidos los dias sin ventas. Se ordenan de izquierda a derecha y
-terminan en la fecha Hasta. Debajo, una unica barra horizontal totaliza todo
-el intervalo con los mismos filtros: costo y ganancia forman la pila y las
-ventas se muestran como total, evitando sumar ventas dos veces.
+El detalle por categoria/item muestra las ultimas 15 jornadas con registros
+dentro del rango general y del filtro de categoria/item, omitiendo los dias
+sin registros. Se ordenan cronologicamente con la mas reciente a la derecha.
+Debajo, Reparticion por jornada laboral muestra todas las jornadas con registros
+del intervalo: una barra vertical por jornada apila costo y ganancia, y una
+linea indica las ventas totales de cada dia. Las etiquetas compactas del costo
+y la ganancia se centran en sus segmentos y las ventas se muestran arriba.
+Las tarjetas inferiores conservan los totales de todo el intervalo y se puede
+desplazar horizontalmente la grafica si hay muchas jornadas.
 
 Las lineas se cargan en paginas de 500, con orden estable por jornada e ID de
 item, en lugar de cortar la respuesta a 2000 filas. Los totales y las opciones
@@ -114,9 +118,9 @@ error y no se entrega un total parcial como resultado completo.
 npm run test:metricas
 ```
 
-Las pruebas cubren rangos largos, cambios de categoria/item, el cierre inclusivo
-del rango (del 5 al 19 de octubre, por ejemplo), fechas historicas, dias sin ventas,
-conteos por estado y margenes negativos. La revision visual local usa datos
+Las pruebas cubren rangos largos, cambios de categoria/item, las ultimas 15
+jornadas activas aunque sean antiguas, la omision de dias vacios, la conservacion
+de totales completos, conteos por estado y margenes negativos. La revision visual local usa datos
 simulados; no requiere modificar datos de produccion.
 
 ## Criterios F5 cubiertos

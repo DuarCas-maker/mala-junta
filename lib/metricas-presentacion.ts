@@ -16,19 +16,10 @@ export function agruparLineasPorDia(lineas: LineaDesglose[], modo: "categoria" |
   return [...mapa.values()].sort((a, b) => a.etiqueta.localeCompare(b.etiqueta));
 }
 
-export function ultimos15Dias(puntos: PuntoDesglose[], desde: string, hasta: string) {
+export function ultimas15JornadasConRegistros(puntos: PuntoDesglose[], desde: string, hasta: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(desde) || !/^\d{4}-\d{2}-\d{2}$/.test(hasta) || desde > hasta) return [];
-  const fin = new Date(`${hasta}T12:00:00Z`);
-  if (Number.isNaN(fin.getTime())) return [];
-  const porDia = new Map(puntos.map((punto) => [punto.etiqueta, punto]));
-  const resultado: PuntoDesglose[] = [];
-  for (let i = 14; i >= 0; i--) {
-    const fecha = new Date(fin);
-    fecha.setUTCDate(fecha.getUTCDate() - i);
-    const dia = fecha.toISOString().slice(0, 10);
-    if (dia >= desde) resultado.push(porDia.get(dia) ?? { etiqueta: dia, ventas: 0, costo: 0, margen: 0, unidades: 0 });
-  }
-  return resultado;
+  return puntos.filter((punto) => punto.etiqueta >= desde && punto.etiqueta <= hasta)
+    .sort((a, b) => a.etiqueta.localeCompare(b.etiqueta)).slice(-15);
 }
 
 export function totalizarDesglose(puntos: PuntoDesglose[]) {

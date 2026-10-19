@@ -23,7 +23,7 @@ import {
 import { formatoCOP } from "@/lib/format";
 import { supabaseBrowser } from "@/lib/supabase-browser";
 import { consultasMetricasAdmin, consultaExportarMetricas } from "@/lib/metricas-consultas";
-import { agruparLineasPorDia, ultimos15Dias, totalizarDesglose, cuentasPorEstado, agruparEstadosPorDia, type PuntoDesglose } from "@/lib/metricas-presentacion";
+import { agruparLineasPorDia, ultimas15JornadasConRegistros, totalizarDesglose, cuentasPorEstado, agruparEstadosPorDia, type PuntoDesglose } from "@/lib/metricas-presentacion";
 
 type ResumenMetricas = {
   desde: string;
@@ -338,7 +338,7 @@ export function MetricasAdminPanel() {
   }, [modoDesglose]);
 
   const puntosDesglose = useMemo(() => agruparLineasPorDia(lineasVenta, modoDesglose, filtroDesglose, desde, hasta), [lineasVenta, modoDesglose, filtroDesglose, desde, hasta]);
-  const diasDesglose = useMemo(() => ultimos15Dias(puntosDesglose, desde, hasta), [puntosDesglose, desde, hasta]);
+  const diasDesglose = useMemo(() => ultimas15JornadasConRegistros(puntosDesglose, desde, hasta), [puntosDesglose, desde, hasta]);
   const totalDesglose = useMemo(() => totalizarDesglose(puntosDesglose), [puntosDesglose]);
 
   const datosEstado = useMemo(() => {
@@ -484,7 +484,7 @@ export function MetricasAdminPanel() {
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <h3 className="font-black text-crema">Detalle por {modoDesglose === "categoria" ? "categoria" : "item"}</h3>
-            <p className="text-sm text-antiguo/60">Ultimos 15 dias del intervalo: {diasDesglose.length ? `${fechaCorta(diasDesglose[0].etiqueta)} al ${fechaCorta(diasDesglose[diasDesglose.length - 1].etiqueta)}` : "selecciona un rango valido"}. La fecha mas reciente aparece a la derecha.</p>
+            <p className="text-sm text-antiguo/60">Ultimas 15 jornadas con registros: {diasDesglose.length ? `${fechaCorta(diasDesglose[0].etiqueta)} al ${fechaCorta(diasDesglose[diasDesglose.length - 1].etiqueta)}` : "sin registros en el intervalo"}. La jornada mas reciente aparece a la derecha.</p>
           </div>
           <div className="grid gap-2 sm:grid-cols-[150px_minmax(180px,280px)]">
             <select aria-label="Tipo de desglose" value={modoDesglose} onChange={(event) => setModoDesglose(event.target.value as ModoDesglose)} className="tap-target rounded-md border border-antiguo/20 bg-espresso px-3 text-crema">
@@ -505,16 +505,18 @@ export function MetricasAdminPanel() {
       </section>
 
       <section className="rounded-md border border-antiguo/10 bg-carbon p-3">
-        <h3 className="font-black text-crema">Total del intervalo por {modoDesglose === "categoria" ? "categoria" : "item"}</h3>
-        <p className="text-sm text-antiguo/60">{desde} al {hasta} · {filtroDesglose || "Todas"}. Incluye todo el intervalo y usa el mismo filtro del detalle diario.</p>
+        <h3 className="font-black text-crema">Reparticion por jornada laboral</h3>
+        <p className="text-sm text-antiguo/60">{desde} al {hasta} · {filtroDesglose || "Todas"}. Costo y ganancia por jornada; la linea muestra el total vendido. Incluye todas las jornadas con registros del intervalo.</p>
         <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <Kpi titulo="Ventas filtro" valor={formatoCOP(totalDesglose.ventas)} />
           <Kpi titulo="Costo filtro" valor={formatoCOP(totalDesglose.costo)} />
           <Kpi titulo="Ganancia filtro" valor={formatoCOP(totalDesglose.margen)} destacado />
           <Kpi titulo="Unidades" valor={totalDesglose.unidades.toLocaleString("es-CO")} />
         </div>
-        <div className="mt-4 h-[210px]">
-          <GraficaTotalDesglose total={totalDesglose} />
+        <div className="mt-4 overflow-x-auto">
+          <div className="h-[340px]" style={{ minWidth: Math.max(780, puntosDesglose.length * 72) }}>
+            <GraficaReparticionJornada datos={puntosDesglose} />
+          </div>
         </div>
       </section>
 
@@ -901,24 +903,32 @@ function GraficaDesglose({ datos }: { datos: PuntoDesglose[] }) {
   );
 }
 
-function GraficaTotalDesglose({ total }: { total: ReturnType<typeof totalizarDesglose> }) {
-  if (!total.unidades && !total.ventas && !total.costo) return <Vacio texto="Sin ventas para este filtro en el intervalo." />;
+function EtiquetaSegmentoJornada({ viewBox, value }: any) {
+  if (!viewBox || Math.abs(numero(viewBox.height)) < 15 || !numero(value)) return null;
+  return <text x={numero(viewBox.x) + numero(viewBox.width) / 2} y={numero(viewBox.y) + numero(viewBox.height) / 2} textAnchor="middle" dominantBaseline="central" fill="#120d0a" fontSize={11} fontWeight={700}>{monedaCorta(value)}</text>;
+}
+
+function GraficaReparticionJornada({ datos }: { datos: PuntoDesglose[] }) {
+  if (datos.length === 0) return <Vacio texto="Sin jornadas con registros para este filtro en el intervalo." />;
+  const normalizados = datos.map((fila) => ({ ...fila, etiquetaCorta: fechaCorta(fila.etiqueta) }));
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <BarChart layout="vertical" data={[{ ...total, etiqueta: "Intervalo" }]} stackOffset="sign" margin={{ top: 28, right: 30, left: 0, bottom: 4 }}>
-        <CartesianGrid stroke="rgba(224,209,190,0.12)" horizontal={false} />
-        <XAxis type="number" tickFormatter={monedaEje} tick={{ fill: "#bda88f", fontSize: 11 }} tickLine={false} axisLine={false} />
-        <YAxis type="category" dataKey="etiqueta" width={66} tick={{ fill: "#bda88f", fontSize: 11 }} tickLine={false} axisLine={false} />
+      <ComposedChart data={normalizados} stackOffset="sign" margin={{ top: 32, right: 20, left: 0, bottom: 4 }}>
+        <CartesianGrid stroke="rgba(224,209,190,0.12)" vertical={false} />
+        <XAxis dataKey="etiquetaCorta" interval={0} tick={{ fill: "#bda88f", fontSize: 10 }} tickLine={false} axisLine={false} />
+        <YAxis tickFormatter={monedaEje} tick={{ fill: "#bda88f", fontSize: 11 }} tickLine={false} axisLine={false} width={64} padding={{ top: 20 }} />
         <Tooltip content={<TooltipMoneda />} />
         <Legend wrapperStyle={{ color: "#e0d1be", fontSize: 12 }} />
-        <Bar dataKey="costo" name="Costo" stackId="total" fill="#ff8b8b" maxBarSize={70}>
-          <LabelList dataKey="costo" position="center" formatter={monedaCorta} fill="#120d0a" fontSize={12} fontWeight={700} />
+        <Bar dataKey="costo" name="Costo" stackId="jornada" fill="#ff8b8b" maxBarSize={64}>
+          <LabelList dataKey="costo" content={<EtiquetaSegmentoJornada />} />
         </Bar>
-        <Bar dataKey="margen" name="Ganancia" stackId="total" fill="#58d68d" maxBarSize={70}>
-          <LabelList dataKey="margen" position="center" formatter={monedaCorta} fill="#120d0a" fontSize={12} fontWeight={700} />
+        <Bar dataKey="margen" name="Ganancia" stackId="jornada" fill="#58d68d" maxBarSize={64}>
+          <LabelList dataKey="margen" content={<EtiquetaSegmentoJornada />} />
         </Bar>
-        <ReferenceLine x={total.ventas} stroke="#e2b07f" strokeWidth={2} label={{ value: `Ventas ${formatoCOP(total.ventas)}`, position: "insideTopRight", fill: "#e2b07f", fontSize: 12 }} />
-      </BarChart>
+        <Line dataKey="ventas" name="Ventas" type="linear" stroke="#e2b07f" strokeWidth={2} dot={{ r: 3 }}>
+          <LabelList dataKey="ventas" position="top" offset={10} formatter={monedaCorta} fill="#e0d1be" fontSize={11} fontWeight={700} />
+        </Line>
+      </ComposedChart>
     </ResponsiveContainer>
   );
 }
