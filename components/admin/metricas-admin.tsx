@@ -424,20 +424,20 @@ export function MetricasAdminPanel() {
   const erroresLista = Object.entries(errores);
 
   return (
-    <section className="grid gap-5 rounded-lg border border-antiguo/15 bg-espresso p-4 shadow-suave">
+    <section className="grid min-w-0 max-w-full grid-cols-[minmax(0,1fr)] gap-5 rounded-lg border border-antiguo/15 bg-espresso p-4 shadow-suave">
       <div className="flex flex-col gap-3 border-b border-antiguo/15 pb-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
           <p className="text-sm font-bold uppercase tracking-wide text-oro">Metricas</p>
           <h2 className="text-2xl font-black text-crema">Ventas y ganancias</h2>
           <p className="mt-1 text-sm text-antiguo/70">Jornada laboral global: 10:00 a. m. hasta 9:59 a. m. del dia siguiente.</p>
         </div>
-        <div className="grid gap-2 md:grid-cols-[auto_auto_auto_150px_minmax(150px,auto)]">
+        <div className="flex min-w-0 flex-wrap items-center gap-2 xl:justify-end">
           <button onClick={aplicarUltimos30} className="tap-target rounded-md border border-antiguo/20 px-3 text-sm font-bold">30 dias</button>
           <button onClick={aplicarSemana} className="tap-target rounded-md border border-antiguo/20 px-3 text-sm font-bold">Semana</button>
           <button onClick={aplicarMes} className="tap-target rounded-md border border-antiguo/20 px-3 text-sm font-bold">Mes</button>
-          <input aria-label="Fecha desde" type="date" value={desde} onChange={(event) => setDesde(event.target.value)} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
-          <div className="grid gap-2 sm:grid-cols-[150px_auto]">
-            <input aria-label="Fecha hasta" type="date" value={hasta} onChange={(event) => setHasta(event.target.value)} className="tap-target rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
+          <input aria-label="Fecha desde" type="date" value={desde} onChange={(event) => setDesde(event.target.value)} className="tap-target w-[150px] rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
+          <div className="flex min-w-0 flex-wrap gap-2">
+            <input aria-label="Fecha hasta" type="date" value={hasta} onChange={(event) => setHasta(event.target.value)} className="tap-target w-[150px] rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
             <button onClick={() => void cargar()} disabled={cargando} className="tap-target rounded-md bg-oro px-4 font-black text-carbon disabled:opacity-50">{cargando ? "Cargando" : "Actualizar"}</button>
           </div>
         </div>
@@ -486,7 +486,7 @@ export function MetricasAdminPanel() {
             <h3 className="font-black text-crema">Detalle por {modoDesglose === "categoria" ? "categoria" : "item"}</h3>
             <p className="text-sm text-antiguo/60">Ultimas 15 jornadas con registros: {diasDesglose.length ? `${fechaCorta(diasDesglose[0].etiqueta)} al ${fechaCorta(diasDesglose[diasDesglose.length - 1].etiqueta)}` : "sin registros en el intervalo"}. La jornada mas reciente aparece a la derecha.</p>
           </div>
-          <div className="grid gap-2 sm:grid-cols-[150px_minmax(180px,280px)]">
+          <div className="grid w-full min-w-0 max-w-[430px] gap-2 sm:grid-cols-2">
             <select aria-label="Tipo de desglose" value={modoDesglose} onChange={(event) => setModoDesglose(event.target.value as ModoDesglose)} className="tap-target rounded-md border border-antiguo/20 bg-espresso px-3 text-crema">
               <option value="categoria">Categoria</option>
               <option value="item">Item</option>
@@ -497,8 +497,8 @@ export function MetricasAdminPanel() {
             </select>
           </div>
         </div>
-        <div className="mt-4 overflow-x-auto">
-          <div className="h-[300px] min-w-[780px]">
+        <div className="mt-4 min-w-0 max-w-full">
+          <div className="h-[300px] w-full min-w-0">
             <GraficaDesglose datos={diasDesglose} />
           </div>
         </div>
@@ -513,8 +513,8 @@ export function MetricasAdminPanel() {
           <Kpi titulo="Ganancia filtro" valor={formatoCOP(totalDesglose.margen)} destacado />
           <Kpi titulo="Unidades" valor={totalDesglose.unidades.toLocaleString("es-CO")} />
         </div>
-        <div className="mt-4 overflow-x-auto">
-          <div className="h-[340px]" style={{ minWidth: Math.max(780, puntosDesglose.length * 72) }}>
+        <div className="mt-4 min-w-0 max-w-full">
+          <div className="h-[340px] w-full min-w-0">
             <GraficaReparticionJornada datos={puntosDesglose} />
           </div>
         </div>
@@ -553,13 +553,13 @@ export function MetricasAdminPanel() {
           <Kpi titulo="Mayor ganancia" valor={productoTopGanancia?.item_nombre ?? "Sin datos"} detalle={productoTopGanancia ? `${formatoCOP(productoTopGanancia.ganancia_bruta)} / ${productoTopGanancia.unidades_vendidas} unid.` : undefined} />
           <Kpi titulo="Mayor cantidad" valor={productoTopUnidades?.item_nombre ?? "Sin datos"} detalle={productoTopUnidades ? `${productoTopUnidades.unidades_vendidas} unid. / ${formatoCOP(productoTopUnidades.ganancia_bruta)}` : undefined} />
         </div>
-        <div className="mt-4 grid gap-4 xl:grid-cols-[1.25fr_1fr]">
+        <div className="mt-4 grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
           <PanelGrafica titulo="Matriz estrella" subtitulo="X: cantidad vendida. Y: ganancia. Tamano: venta bruta.">
             <GraficaMatrizEstrella datos={productosEstrella} promedioUnidades={promedioEstrella.unidades} promedioGanancia={promedioEstrella.ganancia} />
           </PanelGrafica>
           <TablaEstrella filas={topScore} />
         </div>
-        <div className="mt-4 grid gap-4 xl:grid-cols-2">
+        <div className="mt-4 grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-2">
           <PanelGrafica titulo="Top 10 por ganancia" subtitulo="Productos/combos con mayor utilidad bruta.">
             <GraficaTopProductos datos={topGanancia} campo="ganancia_bruta" nombre="Ganancia" color="#58d68d" moneda />
           </PanelGrafica>
@@ -569,7 +569,7 @@ export function MetricasAdminPanel() {
         </div>
       </section>
 
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-2">
         <Tabla titulo="Margen por producto/combo" filas={productos.map((p) => [p.item_nombre, p.categoria, p.unidades_vendidas, formatoCOP(p.ventas), formatoCOP(p.margen_estimado), `${p.margen_pct ?? 0}%`])} columnas={["Item", "Categoria", "Unid.", "Ventas", "Ganancia", "%"]} onCsv={() => exportarLocal("productos", "csv")} onXls={() => exportarLocal("productos", "xls")} onSql={() => void exportarSql("productos")} />
         <Tabla titulo="Ventas por jornada laboral" filas={dias.map((d) => [d.dia_negocio, formatoCOP(d.ventas), formatoCOP(d.costo_estimado), formatoCOP(d.margen_estimado), `${d.margen_pct ?? 0}%`])} columnas={["Jornada", "Ventas", "Costo", "Ganancia", "%"]} onCsv={() => exportarLocal("ventas_dia", "csv")} onXls={() => exportarLocal("ventas_dia", "xls")} />
         <Tabla titulo="Ventas por mesero" filas={ventasMesero.map((v) => [v.dia_negocio, v.mesero, v.cuentas, v.pedidos, formatoCOP(v.ventas_brutas), formatoCOP(v.ventas_pendientes)])} columnas={["Jornada", "Mesero", "Cuentas", "Pedidos", "Ventas", "Pendiente"]} onCsv={() => exportarLocal("ventas_mesero", "csv")} onXls={() => exportarLocal("ventas_mesero", "xls")} onSql={() => void exportarSql("ventas_mesero")} />
@@ -598,10 +598,10 @@ function Kpi({ titulo, valor, detalle, cuentas, destacado = false }: { titulo: s
 
 function PanelGrafica({ titulo, subtitulo, children, pie }: { titulo: string; subtitulo: string; children: React.ReactNode; pie?: React.ReactNode }) {
   return (
-    <section className="rounded-md border border-antiguo/10 bg-carbon p-3">
+    <section className="min-w-0 max-w-full rounded-md border border-antiguo/10 bg-carbon p-3">
       <h3 className="font-black text-crema">{titulo}</h3>
       <p className="text-sm text-antiguo/60">{subtitulo}</p>
-      <div className="mt-3 h-[310px]">{children}</div>
+      <div className="mt-3 h-[310px] w-full min-w-0">{children}</div>
       {pie}
     </section>
   );
@@ -879,18 +879,20 @@ function GraficaAnulados({ datos }: { datos: AnuladoDia[] }) {
 }
 
 function GraficaDesglose({ datos }: { datos: PuntoDesglose[] }) {
+  const [ancho, setAncho] = useState(0);
   if (datos.length === 0) return <Vacio texto="Sin datos para este filtro." />;
-  const normalizados = datos.map((fila) => ({ ...fila, etiquetaCorta: fechaCorta(fila.etiqueta) }));
+  const salto = Math.max(1, Math.ceil(datos.length / Math.max(1, Math.floor((ancho - 84) / 60))));
+  const normalizados = datos.map((fila, indice) => ({ ...fila, etiquetaCorta: fechaCorta(fila.etiqueta), rotuloVenta: indice % salto === 0 ? fila.ventas : null }));
   return (
-    <ResponsiveContainer width="100%" height="100%">
+    <ResponsiveContainer width="100%" height="100%" minWidth={0} onResize={(width) => setAncho(width)}>
       <BarChart data={normalizados} margin={{ top: 28, right: 16, left: 0, bottom: 0 }}>
         <CartesianGrid stroke="rgba(224,209,190,0.12)" vertical={false} />
-        <XAxis dataKey="etiquetaCorta" interval={0} tick={{ fill: "#bda88f", fontSize: 10 }} tickLine={false} axisLine={false} />
+        <XAxis dataKey="etiquetaCorta" interval="preserveStartEnd" minTickGap={14} tick={{ fill: "#bda88f", fontSize: 10 }} tickLine={false} axisLine={false} />
         <YAxis tickFormatter={monedaEje} tick={{ fill: "#bda88f", fontSize: 11 }} tickLine={false} axisLine={false} width={64} />
         <Tooltip content={<TooltipMoneda />} />
         <Legend wrapperStyle={{ color: "#e0d1be", fontSize: 12 }} />
         <Bar dataKey="ventas" name="Ventas" fill="#e2b07f" radius={[3, 3, 0, 0]}>
-          <LabelList dataKey="ventas" position="top" formatter={monedaCorta} fill="#e0d1be" fontSize={10} />
+          <LabelList dataKey="rotuloVenta" position="top" formatter={monedaCorta} fill="#e0d1be" fontSize={10} />
         </Bar>
         <Bar dataKey="costo" name="Costo" fill="#ff8b8b" radius={[3, 3, 0, 0]}>
           {conEspacioParaEtiquetas(datos.length, 2) ? <LabelList dataKey="costo" position="top" formatter={monedaCorta} fill="#e0d1be" fontSize={10} /> : null}
@@ -904,18 +906,20 @@ function GraficaDesglose({ datos }: { datos: PuntoDesglose[] }) {
 }
 
 function EtiquetaSegmentoJornada({ viewBox, value }: any) {
-  if (!viewBox || Math.abs(numero(viewBox.height)) < 15 || !numero(value)) return null;
+  if (!viewBox || Math.abs(numero(viewBox.height)) < 15 || Math.abs(numero(viewBox.width)) < 36 || !numero(value)) return null;
   return <text x={numero(viewBox.x) + numero(viewBox.width) / 2} y={numero(viewBox.y) + numero(viewBox.height) / 2} textAnchor="middle" dominantBaseline="central" fill="#120d0a" fontSize={11} fontWeight={700}>{monedaCorta(value)}</text>;
 }
 
 function GraficaReparticionJornada({ datos }: { datos: PuntoDesglose[] }) {
+  const [ancho, setAncho] = useState(0);
   if (datos.length === 0) return <Vacio texto="Sin jornadas con registros para este filtro en el intervalo." />;
-  const normalizados = datos.map((fila) => ({ ...fila, etiquetaCorta: fechaCorta(fila.etiqueta) }));
+  const salto = Math.max(1, Math.ceil(datos.length / Math.max(1, Math.floor((ancho - 84) / 60))));
+  const normalizados = datos.map((fila, indice) => ({ ...fila, etiquetaCorta: fechaCorta(fila.etiqueta), rotuloVenta: indice % salto === 0 ? fila.ventas : null }));
   return (
-    <ResponsiveContainer width="100%" height="100%">
+    <ResponsiveContainer width="100%" height="100%" minWidth={0} onResize={(width) => setAncho(width)}>
       <ComposedChart data={normalizados} stackOffset="sign" margin={{ top: 32, right: 20, left: 0, bottom: 4 }}>
         <CartesianGrid stroke="rgba(224,209,190,0.12)" vertical={false} />
-        <XAxis dataKey="etiquetaCorta" interval={0} tick={{ fill: "#bda88f", fontSize: 10 }} tickLine={false} axisLine={false} />
+        <XAxis dataKey="etiquetaCorta" interval="preserveStartEnd" minTickGap={14} tick={{ fill: "#bda88f", fontSize: 10 }} tickLine={false} axisLine={false} />
         <YAxis tickFormatter={monedaEje} tick={{ fill: "#bda88f", fontSize: 11 }} tickLine={false} axisLine={false} width={64} padding={{ top: 20 }} />
         <Tooltip content={<TooltipMoneda />} />
         <Legend wrapperStyle={{ color: "#e0d1be", fontSize: 12 }} />
@@ -925,8 +929,8 @@ function GraficaReparticionJornada({ datos }: { datos: PuntoDesglose[] }) {
         <Bar dataKey="margen" name="Ganancia" stackId="jornada" fill="#58d68d" maxBarSize={64}>
           <LabelList dataKey="margen" content={<EtiquetaSegmentoJornada />} />
         </Bar>
-        <Line dataKey="ventas" name="Ventas" type="linear" stroke="#e2b07f" strokeWidth={2} dot={{ r: 3 }}>
-          <LabelList dataKey="ventas" position="top" offset={10} formatter={monedaCorta} fill="#e0d1be" fontSize={11} fontWeight={700} />
+        <Line dataKey="ventas" name="Ventas" type="linear" stroke="#e2b07f" strokeWidth={2} dot={datos.length <= 30 ? { r: 3 } : false}>
+          <LabelList dataKey="rotuloVenta" position="top" offset={10} formatter={monedaCorta} fill="#e0d1be" fontSize={11} fontWeight={700} />
         </Line>
       </ComposedChart>
     </ResponsiveContainer>
@@ -1026,7 +1030,7 @@ function TooltipTopProducto({ active, payload, nombre, moneda }: any) {
 
 function TablaEstrella({ filas }: { filas: ProductoEstrella[] }) {
   return (
-    <section className="rounded-md border border-antiguo/10 bg-espresso p-3">
+    <section className="min-w-0 max-w-full rounded-md border border-antiguo/10 bg-espresso p-3">
       <h3 className="font-black text-crema">Top 10 score estrella</h3>
       <div className="mt-3 overflow-x-auto">
         <table className="w-full min-w-[620px] text-left text-xs">
@@ -1070,7 +1074,7 @@ function Vacio({ texto }: { texto: string }) {
 
 function Tabla({ titulo, columnas, filas, onCsv, onXls, onSql }: { titulo: string; columnas: string[]; filas: (string | number)[][]; onCsv: () => void; onXls: () => void; onSql?: () => void }) {
   return (
-    <section className="rounded-md border border-antiguo/10 bg-carbon p-3">
+    <section className="min-w-0 max-w-full rounded-md border border-antiguo/10 bg-carbon p-3">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <h3 className="font-black text-crema">{titulo}</h3>
         <div className="flex flex-wrap gap-2">

@@ -106,8 +106,13 @@ Debajo, Reparticion por jornada laboral muestra todas las jornadas con registros
 del intervalo: una barra vertical por jornada apila costo y ganancia, y una
 linea indica las ventas totales de cada dia. Las etiquetas compactas del costo
 y la ganancia se centran en sus segmentos y las ventas se muestran arriba.
-Las tarjetas inferiores conservan los totales de todo el intervalo y se puede
-desplazar horizontalmente la grafica si hay muchas jornadas.
+Las tarjetas inferiores conservan los totales de todo el intervalo. Las graficas
+se ajustan al ancho disponible, sin ancho minimo fijo ni crecimiento horizontal
+por cantidad de jornadas. Las etiquetas se distribuyen segun el espacio y los
+valores completos se conservan en el tooltip. El menu lateral de Admin tiene
+un boton superior para colapsar y expandir, conservando el modulo y sus filtros.
+La revision visual con 80 jornadas verifica que el ancho de la pagina coincide
+con el viewport con el menu abierto y cerrado, tambien en pantalla estrecha.
 
 Las lineas se cargan en paginas de 500, con orden estable por jornada e ID de
 item, en lugar de cortar la respuesta a 2000 filas. Los totales y las opciones

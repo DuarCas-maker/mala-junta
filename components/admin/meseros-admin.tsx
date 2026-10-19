@@ -37,6 +37,7 @@ const accesosOperacion = [
 export function MeserosAdmin() {
   const router = useRouter();
   const [moduloActivo, setModuloActivo] = useState<ModuloAdmin>("metricas");
+  const [menuColapsado, setMenuColapsado] = useState(false);
   const [solicitudesTab, setSolicitudesTab] = useState<SolicitudesTab>("ventas");
   const [perfilAdmin, setPerfilAdmin] = useState<Perfil | null>(null);
   const [perfiles, setPerfiles] = useState<Perfil[]>([]);
@@ -169,8 +170,15 @@ export function MeserosAdmin() {
 
   return (
     <main className="min-h-screen bg-carbon text-champana">
-      <div className="mx-auto grid min-h-screen max-w-[1500px] gap-0 lg:grid-cols-[280px_minmax(0,1fr)]">
-        <aside className="border-b border-antiguo/15 bg-cafe/95 px-4 py-4 lg:sticky lg:top-0 lg:h-screen lg:border-b-0 lg:border-r lg:px-5">
+      <div className={`mx-auto grid min-h-screen w-full min-w-0 max-w-[1500px] gap-0 ${menuColapsado ? "lg:grid-cols-[72px_minmax(0,1fr)]" : "lg:grid-cols-[280px_minmax(0,1fr)]"}`}>
+        <aside className={`min-w-0 border-b border-antiguo/15 bg-cafe/95 py-4 lg:sticky lg:top-0 lg:h-screen lg:overflow-y-auto lg:border-b-0 lg:border-r ${menuColapsado ? "px-3" : "px-4 lg:px-5"}`}>
+          <div className={`mb-3 flex items-center ${menuColapsado ? "justify-center" : "justify-between"}`}>
+            {!menuColapsado ? <span className="text-xs font-bold uppercase tracking-wide text-antiguo/60">Navegacion</span> : null}
+            <button type="button" onClick={() => setMenuColapsado((actual) => !actual)} aria-expanded={!menuColapsado} aria-controls="contenido-menu-admin" aria-label={menuColapsado ? "Expandir menu lateral" : "Colapsar menu lateral"} title={menuColapsado ? "Expandir menu lateral" : "Colapsar menu lateral"} className="tap-target flex w-11 shrink-0 items-center justify-center rounded-md border border-antiguo/20 bg-espresso text-crema hover:border-oro/60">
+              <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d={menuColapsado ? "m9 6 6 6-6 6" : "m15 6-6 6 6 6"} /></svg>
+            </button>
+          </div>
+          <div id="contenido-menu-admin" hidden={menuColapsado}>
           <div className="flex items-start justify-between gap-3 lg:block">
             <div>
               <p className="text-xs font-black uppercase tracking-wide text-oro">Mala Junta</p>
@@ -214,6 +222,7 @@ export function MeserosAdmin() {
                 </Link>
               ))}
             </div>
+          </div>
           </div>
         </aside>
 
