@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { LineaDesglose } from "./metricas-presentacion";
+import type { AnuladoDia, LineaDesglose } from "./metricas-presentacion";
 
 // Todas estas RPC son STABLE y solo leen datos. GET usa Accept-Profile,
 // permitido por el CORS del VPS, en vez de Content-Profile de POST.
@@ -18,12 +18,29 @@ export function consultasMetricasAdmin(supabase: SupabaseClient, desde: string, 
     lineas: cargarLineasMetricas(supabase, desde, hasta),
     estados: supabase.rpc("metricas_estado_cuentas_admin", args, lectura),
     estadosDia: supabase.rpc("metricas_estado_dia_admin", args, lectura),
-    anulados: supabase.rpc("metricas_anulados_admin", args, lectura),
+    anulados: cargarAnuladosMetricas(supabase, desde, hasta),
     estrellas: supabase.rpc("metricas_productos_estrella_admin", args, lectura),
     ingresosMedio: supabase.rpc("metricas_ingresos_medios_pago_admin", args, lectura),
     consumoHoras: supabase.rpc("metricas_consumo_horas_admin", args, lectura),
     consumoDiasJornada: supabase.rpc("metricas_consumo_dias_jornada_admin", args, lectura),
   };
+}
+
+// Sin intervalo explicito, incluye todo el historial de la aplicacion.
+// Paginar las jornadas evita promedios incompletos por el limite de PostgREST.
+export async function cargarAnuladosMetricas(supabase: SupabaseClient, desde = "0001-01-01", hasta = "9999-12-31") {
+  const filas: AnuladoDia[] = [];
+  const tamano = 500;
+  let offset = 0;
+  while (true) {
+    const { data, error } = await supabase.rpc("metricas_anulados_admin", { p_desde: desde, p_hasta: hasta }, { get: true })
+      .order("dia_negocio", { ascending: true }).range(offset, offset + tamano - 1);
+    if (error) return { data: null, error };
+    const pagina = (data ?? []) as AnuladoDia[];
+    filas.push(...pagina);
+    if (pagina.length < tamano) return { data: filas, error: null };
+    offset += pagina.length;
+  }
 }
 
 // PostgREST limita cada respuesta. Paginar evita que un rango largo pierda

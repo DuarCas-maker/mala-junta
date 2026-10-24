@@ -1,6 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { agruparLineasPorDia, ultimas15JornadasConRegistros, totalizarDesglose, cuentasPorEstado, agruparEstadosPorDia } from "../lib/metricas-presentacion.ts";
+import { agruparLineasPorDia, ultimas15JornadasConRegistros, totalizarDesglose, cuentasPorEstado, agruparEstadosPorDia, promediarAnulados } from "../lib/metricas-presentacion.ts";
+
+test("promedia monto, cuentas y pedidos por jornadas con anulaciones y diferencia historial e intervalo", () => {
+  const historial = [
+    { dia_negocio: "2026-08-01", monto_anulado: 600000, cuentas_anuladas: 2, pedidos_anulados: 8 },
+    { dia_negocio: "2026-10-19", monto_anulado: 200000, cuentas_anuladas: 0, pedidos_anulados: 3 },
+    { dia_negocio: "2026-10-23", monto_anulado: 100000, cuentas_anuladas: 0, pedidos_anulados: 0 },
+  ];
+  assert.deepEqual(promediarAnulados(historial), { jornadas: 3, monto: 300000, cuentas: 2 / 3, pedidos: 11 / 3 });
+  assert.deepEqual(promediarAnulados(historial.slice(1)), { jornadas: 2, monto: 150000, cuentas: 0, pedidos: 1.5 });
+  assert.deepEqual(promediarAnulados([]), { jornadas: 0, monto: 0, cuentas: 0, pedidos: 0 });
+});
 
 const linea = (dia, ingreso, categoria = "Cervezas", extras = {}) => ({
   dia_negocio: dia, ingreso, categoria, item_nombre: "Aguila", cantidad: 1,

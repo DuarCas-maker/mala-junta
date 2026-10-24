@@ -22,8 +22,8 @@ import {
 } from "recharts";
 import { formatoCOP } from "@/lib/format";
 import { supabaseBrowser } from "@/lib/supabase-browser";
-import { consultasMetricasAdmin, consultaExportarMetricas } from "@/lib/metricas-consultas";
-import { agruparLineasPorDia, ultimas15JornadasConRegistros, totalizarDesglose, cuentasPorEstado, agruparEstadosPorDia, type PuntoDesglose } from "@/lib/metricas-presentacion";
+import { consultasMetricasAdmin, consultaExportarMetricas, cargarAnuladosMetricas } from "@/lib/metricas-consultas";
+import { agruparLineasPorDia, ultimas15JornadasConRegistros, totalizarDesglose, cuentasPorEstado, agruparEstadosPorDia, promediarAnulados, type AnuladoDia, type PuntoDesglose } from "@/lib/metricas-presentacion";
 
 type ResumenMetricas = {
   desde: string;
@@ -59,7 +59,6 @@ type DiaMargen = { dia_negocio: string; ventas: number; costo_estimado: number; 
 type LineaVenta = { dia_negocio: string; item_nombre: string; categoria: string; cantidad: number; ingreso: number; costo_estimado: number; margen_estimado: number; anulado?: boolean };
 type EstadoCuenta = { segmento: string; estado_cuenta: string; cuentas: number; pedidos: number; venta_bruta: number; pagado: number; faltante: number };
 type EstadoDia = EstadoCuenta & { dia_negocio: string };
-type AnuladoDia = { dia_negocio: string; pedidos_anulados: number; cuentas_anuladas: number; monto_anulado: number };
 type IngresoMedioPago = { jornada_laboral: string; efectivo: number; datafono: number; nequi_daviplata: number; transferencia: number; total: number };
 type ConsumoHora = { hora: number; etiqueta: string; cantidad: number; valor_total: number };
 type ConsumoDiaJornada = { dia_semana: number; etiqueta: string; cantidad: number; valor_total: number };
@@ -236,6 +235,10 @@ export function MetricasAdminPanel() {
   const [estados, setEstados] = useState<EstadoCuenta[]>([]);
   const [estadosDia, setEstadosDia] = useState<EstadoDia[]>([]);
   const [anulados, setAnulados] = useState<AnuladoDia[]>([]);
+  const [historialAnulados, setHistorialAnulados] = useState<AnuladoDia[]>([]);
+  const [cargandoHistorial, setCargandoHistorial] = useState(true);
+  const [errorHistorial, setErrorHistorial] = useState<string | null>(null);
+  const ultimaCargaHistorial = useRef(0);
   const [productosEstrella, setProductosEstrella] = useState<ProductoEstrella[]>([]);
   const [ingresosMedioPago, setIngresosMedioPago] = useState<IngresoMedioPago[]>([]);
   const [consumoHoras, setConsumoHoras] = useState<ConsumoHora[]>([]);
@@ -245,6 +248,27 @@ export function MetricasAdminPanel() {
   const [errores, setErrores] = useState<Record<string, string>>({});
   const [cargando, setCargando] = useState(false);
   const ultimaCarga = useRef(0);
+
+  const cargarHistorialAnulados = useCallback(async () => {
+    const carga = ++ultimaCargaHistorial.current;
+    setCargandoHistorial(true);
+    setErrorHistorial(null);
+    try {
+      const resultado = await cargarAnuladosMetricas(supabaseBrowser());
+      if (carga !== ultimaCargaHistorial.current) return;
+      if (resultado.error) setErrorHistorial("No se pudo cargar el historial de anulaciones.");
+      else setHistorialAnulados(resultado.data);
+    } catch {
+      if (carga === ultimaCargaHistorial.current) setErrorHistorial("No se pudo cargar el historial de anulaciones.");
+    } finally {
+      if (carga === ultimaCargaHistorial.current) setCargandoHistorial(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void cargarHistorialAnulados();
+    return () => { ultimaCargaHistorial.current += 1; };
+  }, [cargarHistorialAnulados]);
 
   const cargar = useCallback(async () => {
     const carga = ++ultimaCarga.current;
@@ -438,7 +462,7 @@ export function MetricasAdminPanel() {
           <input aria-label="Fecha desde" type="date" value={desde} onChange={(event) => setDesde(event.target.value)} className="tap-target w-[150px] rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
           <div className="flex min-w-0 flex-wrap gap-2">
             <input aria-label="Fecha hasta" type="date" value={hasta} onChange={(event) => setHasta(event.target.value)} className="tap-target w-[150px] rounded-md border border-antiguo/20 bg-carbon px-3 text-crema" />
-            <button onClick={() => void cargar()} disabled={cargando} className="tap-target rounded-md bg-oro px-4 font-black text-carbon disabled:opacity-50">{cargando ? "Cargando" : "Actualizar"}</button>
+            <button onClick={() => { void cargar(); void cargarHistorialAnulados(); }} disabled={cargando || cargandoHistorial} className="tap-target rounded-md bg-oro px-4 font-black text-carbon disabled:opacity-50">{cargando || cargandoHistorial ? "Cargando" : "Actualizar"}</button>
           </div>
         </div>
       </div>
@@ -536,7 +560,12 @@ export function MetricasAdminPanel() {
         <GraficaParcial datos={parcial} />
       </PanelGrafica>
 
-      <PanelGrafica titulo="Anulados por jornada laboral" subtitulo="Monto anulado y cantidad de pedidos/cuentas anuladas.">
+      <PanelGrafica titulo="Anulados por jornada laboral" subtitulo="Monto anulado y cantidad de pedidos/cuentas anuladas." pie={
+        <div className="mt-4 grid min-w-0 gap-3 lg:grid-cols-2">
+          <PromedioAnulados titulo="Promedio general" periodo="Todo el historial" datos={historialAnulados} cargando={cargandoHistorial} error={errorHistorial} reintentar={cargarHistorialAnulados} />
+          <PromedioAnulados titulo="Promedio del intervalo seleccionado" periodo={`${desde} al ${hasta}`} datos={anulados} cargando={cargando} error={errores.anulados} />
+        </div>
+      }>
         <GraficaAnulados datos={anulados} />
       </PanelGrafica>
 
@@ -593,6 +622,35 @@ function Kpi({ titulo, valor, detalle, cuentas, destacado = false }: { titulo: s
       {cuentas !== undefined ? <p className="mt-1 text-sm font-bold text-crema/85">Cantidad: {textoCuentas(cuentas)}</p> : null}
       {detalle ? <p className="text-xs text-antiguo/55">{detalle}</p> : null}
     </div>
+  );
+}
+
+function PromedioAnulados({ titulo, periodo, datos, cargando, error, reintentar }: { titulo: string; periodo: string; datos: AnuladoDia[]; cargando: boolean; error?: string | null; reintentar?: () => Promise<void> }) {
+  const promedio = promediarAnulados(datos);
+  const formatoCantidad = (valor: number) => valor.toLocaleString("es-CO", { maximumFractionDigits: 2 });
+  return (
+    <section className="min-w-0 rounded-md border border-antiguo/20 p-3" aria-label={titulo}>
+      <h4 className="font-bold text-crema">{titulo}</h4>
+      <p className="break-words text-xs text-antiguo/70">{periodo}</p>
+      {cargando ? <p role="status" className="mt-3 text-sm text-antiguo/70">Calculando promedio…</p> : error ? (
+        <div className="mt-3 text-sm text-dorado">
+          <p>No se pudo calcular el promedio.</p>
+          {reintentar && <button type="button" onClick={() => void reintentar()} className="tap-target mt-2 rounded-md border border-antiguo/30 px-3">Reintentar historial</button>}
+        </div>
+      ) : promedio.jornadas === 0 ? <p className="mt-3 text-sm text-antiguo/70">Sin jornadas con anulaciones para calcular el promedio.</p> : (
+        <>
+          <dl className="mt-3 grid min-w-0 gap-3 sm:grid-cols-3">
+            {[{ etiqueta: "Monto", valor: formatoCOP(promedio.monto) }, { etiqueta: "Cuentas", valor: formatoCantidad(promedio.cuentas) }, { etiqueta: "Pedidos", valor: formatoCantidad(promedio.pedidos) }].map(({ etiqueta, valor }) => (
+              <div key={etiqueta} className="min-w-0">
+                <dt className="text-xs text-antiguo/70">{etiqueta}</dt>
+                <dd className="break-words text-lg font-black tabular-nums text-crema">{valor}</dd>
+              </div>
+            ))}
+          </dl>
+          <p className="mt-3 text-xs text-antiguo/70">Por jornada con anulaciones · {promedio.jornadas} {promedio.jornadas === 1 ? "jornada" : "jornadas"}.</p>
+        </>
+      )}
+    </section>
   );
 }
 

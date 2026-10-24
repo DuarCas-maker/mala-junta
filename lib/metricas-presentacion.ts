@@ -1,6 +1,18 @@
 export type LineaDesglose = { dia_negocio: string; item_nombre: string; categoria: string; cantidad: number; ingreso: number; costo_estimado: number; margen_estimado: number; anulado?: boolean };
 export type PuntoDesglose = { etiqueta: string; ventas: number; margen: number; costo: number; unidades: number };
 export type EstadoMetrica = { segmento: string; cuentas: number; venta_bruta: number; pagado: number; faltante: number };
+export type AnuladoDia = { dia_negocio: string; pedidos_anulados: number; cuentas_anuladas: number; monto_anulado: number };
+
+// La RPC devuelve una fila por jornada con anulaciones, no dias calendario.
+export function promediarAnulados(filas: AnuladoDia[]) {
+  const jornadas = filas.length;
+  const total = filas.reduce((acc, fila) => ({
+    monto: acc.monto + Number(fila.monto_anulado ?? 0),
+    cuentas: acc.cuentas + Number(fila.cuentas_anuladas ?? 0),
+    pedidos: acc.pedidos + Number(fila.pedidos_anulados ?? 0),
+  }), { monto: 0, cuentas: 0, pedidos: 0 });
+  return { jornadas, monto: jornadas ? total.monto / jornadas : 0, cuentas: jornadas ? total.cuentas / jornadas : 0, pedidos: jornadas ? total.pedidos / jornadas : 0 };
+}
 
 export function agruparLineasPorDia(lineas: LineaDesglose[], modo: "categoria" | "item", valor: string, desde: string, hasta: string) {
   const mapa = new Map<string, PuntoDesglose>();

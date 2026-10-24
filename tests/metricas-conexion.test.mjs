@@ -1,7 +1,35 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createClient } from "@supabase/supabase-js";
-import { consultasMetricasAdmin, consultaExportarMetricas, cargarLineasMetricas } from "../lib/metricas-consultas.ts";
+import { consultasMetricasAdmin, consultaExportarMetricas, cargarLineasMetricas, cargarAnuladosMetricas } from "../lib/metricas-consultas.ts";
+
+test("el promedio general consulta todo el historial y pagina mas de mil jornadas con la sesion del administrador", async () => {
+  const filas = Array.from({ length: 1101 }, (_, i) => ({ dia_negocio: String(i), monto_anulado: i, cuentas_anuladas: 1, pedidos_anulados: 2 }));
+  const { cliente, peticiones } = clienteConCors(({ url, method, headers }) => {
+    assert.equal(url.pathname, "/rest/v1/rpc/metricas_anulados_admin");
+    assert.equal(url.searchParams.get("p_desde"), "0001-01-01");
+    assert.equal(url.searchParams.get("p_hasta"), "9999-12-31");
+    assert.equal(url.searchParams.get("order"), "dia_negocio.asc");
+    assert.equal(method, "GET");
+    assert.equal(headers.get("authorization"), "Bearer sesion-admin-test");
+    const offset = Number(url.searchParams.get("offset"));
+    const limit = Number(url.searchParams.get("limit"));
+    return Response.json(filas.slice(offset, offset + limit));
+  });
+  const { data, error } = await cargarAnuladosMetricas(cliente);
+  assert.equal(error, null);
+  assert.deepEqual(data, filas);
+  assert.deepEqual(peticiones.map(({ url }) => Number(url.searchParams.get("offset"))), [0, 500, 1000]);
+});
+
+test("un fallo al paginar anulaciones impide calcular un promedio con historial incompleto", async () => {
+  const { cliente } = clienteConCors(({ url }) => Number(url.searchParams.get("offset")) === 0
+    ? Response.json(Array.from({ length: 500 }, () => ({ monto_anulado: 1000 })))
+    : Response.json({ code: "42501", message: "sin_permiso" }, { status: 403 }));
+  const { data, error } = await cargarAnuladosMetricas(cliente);
+  assert.equal(data, null);
+  assert.equal(error.code, "42501");
+});
 
 // Reproduce los encabezados permitidos por Kong en el VPS. El navegador
 // rechaza Content-Profile antes de enviar una RPC POST, aunque el servidor funcione.
